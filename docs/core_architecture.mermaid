@@ -1,0 +1,34 @@
+---
+title: Sahayak — voice agent v1
+---
+flowchart TB
+
+    subgraph CAP["Audio capture - two separate streams, no diarization needed"]
+        MIC["Candidate mic"]
+        SYS["Interviewer audio - system/loopback or second mic"]
+    end
+
+    subgraph TURN["Per-stream turn detection"]
+        VADQ["VAD - interviewer stream"]
+        VADA["VAD - candidate stream - tuned silence threshold ~1.2-1.5s"]
+    end
+
+    subgraph STT["Speech-to-text"]
+        STTQ["STT - question transcript"]
+        STTA["STT - answer transcript"]
+    end
+
+    subgraph EVAL["Answer evaluation"]
+        CTX["Latest question + full answer"]
+        LLM["LLM - evaluates the answer"]
+    end
+
+    subgraph OUT["Feedback delivery - candidate only, never into shared call audio"]
+        TEXT["On-screen text feedback"]
+        TTSOUT["Spoken feedback - candidate headphones, between turns"]
+    end
+
+    SYS --> VADQ --> STTQ --> CTX
+    MIC --> VADA --> STTA --> CTX
+    CTX --> LLM --> TEXT
+    LLM --> TTSOUT

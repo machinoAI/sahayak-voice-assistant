@@ -3,6 +3,16 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# macOS
+.DS_Store
+
+# Local test audio artifacts (selftest writes tests/out.wav)
+*.wav
+
+# Machine-local data scratch (keep folder; ignore contents)
+data/local/**
+!data/local/.gitkeep
+
 # C extensions
 *.so
 

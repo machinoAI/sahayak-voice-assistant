@@ -1,0 +1,8 @@
+# NOTE: pinned to 0.0.108 deliberately — every 1.x release requires
+# onnxruntime~=1.24.3, which publishes no macOS x86_64 wheels (this machine
+# is Intel). 0.0.108 is the newest version whose deps resolve here.
+pipecat-ai[silero,local,whisper,kokoro,openrouter]==0.0.108
+numba>=0.61.2,<0.62  # newer numba needs llvmlite wheels that don't exist for macOS x86_64
+websockets>=13.1,<16  # imported by pipecat's TTS base class but not a core dep in 0.0.108
+python-dotenv>=1.0,<2
+soundfile>=0.12,<1
