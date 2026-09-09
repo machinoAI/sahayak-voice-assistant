@@ -15,8 +15,11 @@ First run downloads models (~1.6 GB total) into the shared caches.
 import os
 import re
 import sys
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import soundfile as sf
@@ -24,8 +27,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from core.config import CPU_THREADS, OPENROUTER_MODEL, STT_MODEL
+from core.config import CPU_THREADS, OPENROUTER_MAX_TOKENS, OPENROUTER_MODEL, STT_MODEL
+from core.timing import TurnTiming
+from pipecat.frames.frames import (
+    InterruptionFrame,
+    LLMFullResponseEndFrame,
+    TranscriptionFrame,
+    TTSStoppedFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
+from pipecat.observers.base_observer import FramePushed
+from pipecat.processors.frame_processor import FrameDirection
 from prompts import SYSTEM_PROMPT
+from voice_loop import TurnTimingObserver, _build_pipeline
 
 PHRASE = "The quick brown fox jumps over the lazy dog."
 OUT_WAV = Path(__file__).parent / "out.wav"
@@ -112,7 +129,7 @@ def test_llm() -> None:
             headers={"Authorization": f"Bearer {key}"},
             json={
                 "model": OPENROUTER_MODEL,
-                "max_tokens": 80,
+                "max_tokens": OPENROUTER_MAX_TOKENS,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": "Say hello in one short sentence."},
@@ -127,11 +144,112 @@ def test_llm() -> None:
         check("llm.ping", False, f"{type(exc).__name__}: {exc}")
 
 
+def test_timing() -> None:
+    import json
+
+    print("[4] Timing: verifying dependency-free stage records")
+    turn = TurnTiming(turn_id="test-turn")
+    for stage_name in ("vad", "stt", "llm", "tts"):
+        with turn.stage(stage_name):
+            time.sleep(0.01)
+
+    data = json.loads(turn.to_json())
+    stages = data.get("stages", [])
+    valid_schema = (
+        data.get("turn_id") == "test-turn"
+        and [stage.get("name") for stage in stages] == ["vad", "stt", "llm", "tts"]
+        and data.get("total_ms", 0) > 0
+        and all(
+            isinstance(stage.get("start_timestamp"), str)
+            and isinstance(stage.get("end_timestamp"), str)
+            and datetime.fromisoformat(stage["start_timestamp"])
+            and datetime.fromisoformat(stage["end_timestamp"])
+            and stage.get("duration_ms", -1) >= 0
+            and stage.get("gap_before_ms", -1) >= 0
+            for stage in stages
+        )
+    )
+    detail = f"{len(stages)} stages, total {data.get('total_ms', 0):.2f}ms"
+    check("timing.turn_record_schema", valid_schema, detail)
+
+
+def test_timing_observer() -> None:
+    import asyncio
+    import json
+
+    print("[5] Timing: verifying voice-loop frame adapter")
+
+    async def _run() -> list[str]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            timing_log_path = Path(temp_dir) / "turn_timings.jsonl"
+            observer = TurnTimingObserver(timing_log_path)
+            frames = [
+                VADUserStartedSpeakingFrame(),
+                UserStartedSpeakingFrame(),
+                InterruptionFrame(),
+                VADUserStartedSpeakingFrame(),
+                VADUserStoppedSpeakingFrame(),
+                UserStoppedSpeakingFrame(),
+                TranscriptionFrame(
+                    text="hello", user_id="user", timestamp="2026-09-08T00:00:00Z"
+                ),
+                LLMFullResponseEndFrame(),
+                TTSStoppedFrame(),
+            ]
+            records: list[str] = []
+            with patch("builtins.print", records.append):
+                for frame in frames:
+                    await observer.on_push_frame(
+                        FramePushed(
+                            source=None,
+                            destination=None,
+                            frame=frame,
+                            direction=FrameDirection.DOWNSTREAM,
+                            timestamp=0,
+                        )
+                    )
+            stored_records = timing_log_path.read_text(encoding="utf-8").splitlines()
+        return records + stored_records
+
+    records = asyncio.run(_run())
+    data = json.loads(records[0]) if len(records) == 2 else {}
+    stage_names = [stage.get("name") for stage in data.get("stages", [])]
+    check(
+        "timing.voice_loop_adapter",
+        len(records) == 2
+        and records[0] == records[1]
+        and stage_names == ["vad", "stt", "llm", "tts"],
+        f"{len(records)} emitted/stored records, stages {stage_names}",
+    )
+
+
+def test_pipeline_vad() -> None:
+    print("[6] Pipeline: verifying local VAD is configured")
+    # Pipeline construction needs a key value, but this check never sends a
+    # request; keep the local-only selftest runnable without a real key.
+    with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
+        pipeline = _build_pipeline()
+    user_aggregator = next(
+        processor
+        for processor in pipeline.processors
+        if type(processor).__name__ == "LLMUserAggregator"
+    )
+    vad = user_aggregator._params.vad_analyzer
+    check(
+        "pipeline.vad_configured",
+        vad is not None,
+        type(vad).__name__ if vad is not None else "missing",
+    )
+
+
 if __name__ == "__main__":
     test_tts()
     matched, transcript = test_stt()
     check("roundtrip.match", matched)
     test_llm()
+    test_timing()
+    test_timing_observer()
+    test_pipeline_vad()
 
     failed = [name for name, ok, _ in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
