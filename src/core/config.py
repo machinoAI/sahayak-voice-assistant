@@ -20,7 +20,13 @@ STT_MODEL = os.environ.get("STT_MODEL", "Systran/faster-distil-whisper-medium.en
 # Hyperthreads (12) make no further difference.
 CPU_THREADS = 6
 
-# CLAUDE.md pins z-ai/glm-5.2:free; its free pool intermittently returns 429
-# (verified 2026-08-26). Override via OPENROUTER_MODEL without editing code —
-# e.g. minimax/minimax-m3:free was verified working that day.
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "z-ai/glm-5.2:free")
+# The former default, z-ai/glm-5.2:free, returned HTTP 404 from OpenRouter on
+# 2026-09-08. This replacement was verified to return a short chat response.
+# Override via OPENROUTER_MODEL without editing code.
+OPENROUTER_MODEL = os.environ.get(
+    "OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-sante:free"
+)
+
+# This model can spend tokens on internal reasoning before emitting speakable
+# text. 256 leaves room for the concise response requested by SYSTEM_PROMPT.
+OPENROUTER_MAX_TOKENS = int(os.environ.get("OPENROUTER_MAX_TOKENS", "256"))

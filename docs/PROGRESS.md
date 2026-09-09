@@ -10,6 +10,38 @@ be you, might be a teammate).
 
 ---
 
+### 2026-09-08 — Turn-stage timing records
+**Done:**
+- Added dependency-free, context-manager timing records for VAD, STT, LLM, and TTS stages.
+- The voice loop prints one metadata-only JSON record after each completed or interrupted turn.
+
+**Verified:**
+- Component selftest covers timing-record schema and JSON serialization.
+
+**Known issues / not yet done:**
+- `total_ms` includes caller speech and the VAD silence wait. It represents full turn elapsed time, not perceived response latency.
+
+**Next:**
+- Run one spoken live-loop turn and inspect the emitted timing JSON.
+
+---
+
+### 2026-09-08 — Replaced retired OpenRouter default
+**Done:**
+- Changed the default LLM from `z-ai/glm-5.2:free` to `inclusionai/ling-3.0-flash-sante:free` after the former returned HTTP 404.
+
+**Verified:**
+- Component selftest: 6/6 passed with the new model.
+- Live loop initialized its local Smart Turn, STT, LLM, TTS, and audio pipeline successfully.
+
+**Known issues / not yet done:**
+- A human microphone/speaker conversation has not been performed in this session.
+
+**Next:**
+- Run one spoken live-loop turn and confirm the generated reply is audible.
+
+---
+
 ## Template for a new entry
 
 ### YYYY-MM-DD — short title
