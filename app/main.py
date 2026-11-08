@@ -1,41 +1,16 @@
 """
 Sahayak Voice Assistant FastAPI Application Entrypoint.
+Connects concrete adapters: Edge-TTS, Groq LLM, Qdrant Vector Store, and Deepgram STT.
 """
 
 from fastapi import FastAPI
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
 from app.api.websocket_endpoint import get_voice_router
-from app.interfaces.adapters import (
-    RetrievedDocument,
-    STTClientProtocol,
-    VectorStoreProtocol,
-    LLMClientProtocol,
-    TTSClientProtocol,
-)
-from typing import AsyncGenerator, List
-
-# Default Mock / In-Memory Adapters for baseline testing & startup
-class MockSTT:
-    async def stream_audio_frames(self, audio_generator: AsyncGenerator[bytes, None]) -> AsyncGenerator[str, None]:
-        yield "Hello Sahayak"
-
-class MockVectorStore:
-    async def hybrid_search(self, query: str, top_k: int = 2) -> List[RetrievedDocument]:
-        return [
-            RetrievedDocument(id="doc-1", text="Sahayak is a voice RAG assistant for multilingual queries.", score=0.92)
-        ]
-
-class MockLLM:
-    async def stream_tokens(self, prompt: str) -> AsyncGenerator[str, None]:
-        tokens = ["Namaste! ", "I am ", "Sahayak, ", "ready to ", "assist you."]
-        for token in tokens:
-            yield token
-
-class MockTTS:
-    async def synthesize_stream(self, text: str) -> AsyncGenerator[bytes, None]:
-        # Yield 3 dummy 20ms frames (640 bytes each)
-        for _ in range(3):
-            yield b"\x00" * 640
+from app.adapters.tts_edge import EdgeTTSAdapter
+from app.adapters.llm_groq import GroqLLMAdapter
+from app.adapters.vector_store_qdrant import QdrantVectorStoreAdapter
+from app.adapters.stt_deepgram import DeepgramSTTAdapter
+from app.core.config import settings
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -44,11 +19,22 @@ def create_app() -> FastAPI:
         description="High-performance async streaming Voice RAG backend.",
     )
 
+    # Initialize concrete adapters
+    tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_VOICE)
+    llm_adapter = GroqLLMAdapter(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
+    vdb_adapter = QdrantVectorStoreAdapter(
+        url=settings.QDRANT_URL,
+        api_key=settings.QDRANT_API_KEY,
+        collection_name=settings.QDRANT_COLLECTION,
+    )
+    stt_adapter = DeepgramSTTAdapter(api_key=settings.DEEPGRAM_API_KEY)
+
+    # Wire into async orchestrator
     orchestrator = VoiceRAGOrchestrator(
-        stt=MockSTT(),
-        vdb=MockVectorStore(),
-        llm=MockLLM(),
-        tts=MockTTS(),
+        stt=stt_adapter,
+        vdb=vdb_adapter,
+        llm=llm_adapter,
+        tts=tts_adapter,
     )
 
     voice_router = get_voice_router(orchestrator)
@@ -56,7 +42,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health_check():
-        return {"status": "ok", "service": "sahayak-voice-assistant"}
+        return {
+            "status": "ok",
+            "service": "sahayak-voice-assistant",
+            "tts_provider": "edge-tts",
+            "voice": settings.EDGE_VOICE,
+            "llm_model": settings.GROQ_MODEL,
+            "vector_db": settings.QDRANT_URL,
+        }
 
     return app
 
@@ -64,4 +57,4 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=settings.DEBUG)
