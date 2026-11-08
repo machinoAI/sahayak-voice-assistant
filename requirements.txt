@@ -12,3 +12,4 @@ edge-tts>=6.1.12
 cartesia>=4.2.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+sounddevice>=0.5.0

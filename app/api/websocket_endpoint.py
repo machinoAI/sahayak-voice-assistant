@@ -76,6 +76,8 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
         try:
             while True:
                 message = await websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
                 if "bytes" in message and message["bytes"]:
                     # Binary PCM audio frame (e.g. 20ms chunk = 640 bytes)
                     audio_bytes = message["bytes"]
@@ -103,7 +105,7 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                                 )
                     except json.JSONDecodeError:
                         pass
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
             if stt_listener_task and not stt_listener_task.done():
