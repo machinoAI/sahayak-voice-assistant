@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
 from app.api.websocket_endpoint import get_voice_router
 from app.adapters.tts_edge import EdgeTTSAdapter
+from app.adapters.tts_cartesia import CartesiaTTSAdapter
 from app.adapters.llm_groq import GroqLLMAdapter
 from app.adapters.vector_store_qdrant import QdrantVectorStoreAdapter
 from app.adapters.stt_deepgram import DeepgramSTTAdapter
@@ -19,8 +20,17 @@ def create_app() -> FastAPI:
         description="High-performance async streaming Voice RAG backend.",
     )
 
-    # Initialize concrete adapters
-    tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_VOICE)
+    # Initialize concrete adapters (prefer Cartesia if key is configured, fallback to Edge-TTS)
+    if settings.CARTESIA_API_KEY:
+        tts_adapter = CartesiaTTSAdapter(
+            api_key=settings.CARTESIA_API_KEY,
+            voice_id=settings.CARTESIA_VOICE_ID,
+        )
+        tts_provider_name = "cartesia-sonic"
+    else:
+        tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_VOICE)
+        tts_provider_name = "edge-tts"
+
     llm_adapter = GroqLLMAdapter(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
     vdb_adapter = QdrantVectorStoreAdapter(
         url=settings.QDRANT_URL,
@@ -45,8 +55,8 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "service": "sahayak-voice-assistant",
-            "tts_provider": "edge-tts",
-            "voice": settings.EDGE_VOICE,
+            "tts_provider": tts_provider_name,
+            "voice": settings.CARTESIA_VOICE_ID if settings.CARTESIA_API_KEY else settings.EDGE_VOICE,
             "llm_model": settings.GROQ_MODEL,
             "vector_db": settings.QDRANT_URL,
         }

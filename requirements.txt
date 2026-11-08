@@ -9,5 +9,6 @@ qdrant-client>=1.11.0
 groq>=0.11.0
 google-genai>=0.1.0
 edge-tts>=6.1.12
+cartesia>=4.2.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
