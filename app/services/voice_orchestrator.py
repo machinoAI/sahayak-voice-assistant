@@ -20,6 +20,7 @@ from app.interfaces.adapters import (
     RetrievedDocument,
 )
 from app.core.logger import TurnTracker, logger
+from app.services.session_memory import SessionMemory
 
 ABBREVIATIONS = {
     "mr.", "mrs.", "ms.", "dr.", "prof.", "e.g.", "i.e.", "rs.", "vs.", "approx."
@@ -92,10 +93,15 @@ class VoiceRAGOrchestrator:
         tts_active = self.active_tts_task is not None and not self.active_tts_task.done()
         return gen_active or tts_active
 
-    async def handle_user_interruption(self, websocket: WebSocket) -> None:
+    async def handle_user_interruption(
+        self, websocket: WebSocket, session_memory: Optional[SessionMemory] = None
+    ) -> None:
         """Triggered immediately by VAD when user speaks while assistant is generating/speaking."""
         if self.current_tracker:
             self.current_tracker.log_step("USER_BARGE_IN_TRIGGERED")
+
+        if session_memory is not None:
+            session_memory.mark_last_interrupted()
 
         tasks_to_cancel = []
         if self.active_generation_task and not self.active_generation_task.done():
@@ -159,7 +165,12 @@ class VoiceRAGOrchestrator:
         except asyncio.CancelledError:
             tracker.log_step("TTS_WORKER_CANCELLED")
 
-    async def process_voice_turn(self, final_transcript: str, websocket: WebSocket) -> TurnTracker:
+    async def process_voice_turn(
+        self,
+        final_transcript: str,
+        websocket: WebSocket,
+        session_memory: Optional[SessionMemory] = None,
+    ) -> TurnTracker:
         """Executes vector retrieval, prompt compilation, and decoupled token-to-speech streaming."""
         turn_id = str(uuid.uuid4())
         tracker = TurnTracker(turn_id)
@@ -172,12 +183,25 @@ class VoiceRAGOrchestrator:
             self._tts_worker(self.sentence_queue, websocket, tracker)
         )
         self.active_generation_task = asyncio.current_task()
+        collected_tokens: List[str] = []
 
         try:
-            # 1. Hybrid retrieval
-            tracker.log_step("RAG_RETRIEVAL_START", {"query": final_transcript})
+            # 1. Hybrid retrieval (with pronoun/follow-up heuristic augmentation)
+            search_query = (
+                session_memory.get_augmented_query(final_transcript)
+                if session_memory is not None
+                else final_transcript
+            )
+            tracker.log_step(
+                "RAG_RETRIEVAL_START",
+                {
+                    "query": search_query,
+                    "raw_query": final_transcript,
+                    "augmented": search_query != final_transcript,
+                },
+            )
             docs: List[RetrievedDocument] = await self.vdb.hybrid_search(
-                query=final_transcript, 
+                query=search_query, 
                 top_k=2
             )
             tracker.log_step(
@@ -186,13 +210,25 @@ class VoiceRAGOrchestrator:
             )
             context_text = "\n".join([doc.text for doc in docs])
 
-            # 2. Voice-first system prompt
+            # 2. Voice-first system prompt with rolling conversation history
             system_prompt = (
                 "You are Sahayak, a voice assistant. "
                 "Answer using ONLY the provided context in 1-2 spoken sentences. "
                 "Never use lists, markdown, asterisks, or URLs. Speak naturally."
             )
-            prompt = f"{system_prompt}\nContext:\n{context_text}\nUser Question: {final_transcript}"
+            history_block = (
+                session_memory.format_history_for_prompt()
+                if session_memory is not None
+                else ""
+            )
+            if history_block:
+                prompt = (
+                    f"{system_prompt}\n\n{history_block}\n\n"
+                    f"Context:\n{context_text}\n"
+                    f"User Question: {final_transcript}"
+                )
+            else:
+                prompt = f"{system_prompt}\nContext:\n{context_text}\nUser Question: {final_transcript}"
 
             # 3. LLM Token Stream -> Sentence Boundary Splitter -> Queue Producer
             tracker.log_step("LLM_STREAM_START", {"model": getattr(self.llm, "model", "default")})
@@ -210,6 +246,7 @@ class VoiceRAGOrchestrator:
                     )
 
                 token_count += 1
+                collected_tokens.append(token)
                 sentence_buffer += token
 
                 # Drain all matched sentences from the buffer without slicing corruption
@@ -244,6 +281,16 @@ class VoiceRAGOrchestrator:
             await self.sentence_queue.put(None)
             await self.active_tts_task
 
+            # Commit completed dialogue turn to session memory
+            full_assistant_reply = "".join(collected_tokens).strip()
+            if session_memory is not None:
+                session_memory.add_turn(
+                    turn_id=turn_id,
+                    user_query=final_transcript,
+                    assistant_response=full_assistant_reply,
+                    was_interrupted=False,
+                )
+
             tracker.log_step(
                 "TURN_COMPLETED_SUCCESS",
                 {"total_turn_ms": round((time.perf_counter() - tracker.start_time) * 1000, 1)},
@@ -251,6 +298,14 @@ class VoiceRAGOrchestrator:
 
         except asyncio.CancelledError:
             tracker.log_step("TURN_CANCELLED_ON_BARGE_IN")
+            if session_memory is not None:
+                partial_reply = "".join(collected_tokens).strip()
+                session_memory.add_turn(
+                    turn_id=turn_id,
+                    user_query=final_transcript,
+                    assistant_response=partial_reply,
+                    was_interrupted=True,
+                )
             if self.active_tts_task and not self.active_tts_task.done():
                 self.active_tts_task.cancel()
         except WebSocketDisconnect:

@@ -8,6 +8,7 @@ import asyncio
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
+from app.services.session_memory import SessionMemory
 from app.core.logger import logger
 
 router = APIRouter()
@@ -16,6 +17,9 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
     @router.websocket("/ws/voice")
     async def voice_websocket(websocket: WebSocket):
         await websocket.accept()
+
+        # Connection-scoped conversational memory buffer (default last 3 turns)
+        session_memory = SessionMemory(max_turns=3)
 
         # Initialize live STT stream session if supported by the adapter
         stt_session_factory = getattr(orchestrator.stt, "create_stream_session", None)
@@ -42,7 +46,7 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                     # Server-side automatic barge-in detection
                     if orchestrator.is_speaking():
                         logger.info(f"[BARGE_IN] User interruption detected during speech: '{text[:30]}'")
-                        await orchestrator.handle_user_interruption(websocket)
+                        await orchestrator.handle_user_interruption(websocket, session_memory=session_memory)
 
                     if event_type == "interim":
                         await orchestrator._send_safe_json(websocket, {
@@ -55,8 +59,12 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                             "event": "FINAL_TRANSCRIPT",
                             "text": text,
                         })
-                        # Launch voice turn as independent task so STT listener remains active for barge-in
-                        asyncio.create_task(orchestrator.process_voice_turn(text, websocket))
+                        # Launch voice turn with session memory
+                        asyncio.create_task(
+                            orchestrator.process_voice_turn(
+                                text, websocket, session_memory=session_memory
+                            )
+                        )
 
             except asyncio.CancelledError:
                 pass
@@ -81,11 +89,18 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                         event_type = event.get("event")
 
                         if event_type == "USER_BARGE_IN":
-                            await orchestrator.handle_user_interruption(websocket)
+                            await orchestrator.handle_user_interruption(websocket, session_memory=session_memory)
+                        elif event_type == "RESET_SESSION":
+                            session_memory.clear()
+                            await orchestrator._send_safe_json(websocket, {"event": "SESSION_RESET"})
                         elif event_type == "FINAL_TRANSCRIPT":
                             transcript = event.get("text", "").strip()
                             if transcript:
-                                asyncio.create_task(orchestrator.process_voice_turn(transcript, websocket))
+                                asyncio.create_task(
+                                    orchestrator.process_voice_turn(
+                                        transcript, websocket, session_memory=session_memory
+                                    )
+                                )
                     except json.JSONDecodeError:
                         pass
         except WebSocketDisconnect:
@@ -99,5 +114,6 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                     pass
             if session:
                 await session.close()
+            session_memory.clear()
 
     return router
