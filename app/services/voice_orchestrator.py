@@ -86,6 +86,12 @@ class VoiceRAGOrchestrator:
             except (WebSocketDisconnect, RuntimeError):
                 pass
 
+    def is_speaking(self) -> bool:
+        """Returns True if the assistant is currently generating tokens or streaming audio."""
+        gen_active = self.active_generation_task is not None and not self.active_generation_task.done()
+        tts_active = self.active_tts_task is not None and not self.active_tts_task.done()
+        return gen_active or tts_active
+
     async def handle_user_interruption(self, websocket: WebSocket) -> None:
         """Triggered immediately by VAD when user speaks while assistant is generating/speaking."""
         if self.current_tracker:

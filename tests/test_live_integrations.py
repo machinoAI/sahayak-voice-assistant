@@ -137,3 +137,51 @@ def test_full_pipeline_step_by_step_tracking():
         print(f"[SUCCESS] Dispatched {total_audio_packets} binary audio packets to WebSocket client.")
 
     asyncio.run(_run())
+
+def test_deepgram_live_streaming_transcription():
+    """Verify live Deepgram streaming speech-to-text with synthesized 16kHz PCM audio."""
+    if not settings.DEEPGRAM_API_KEY:
+        pytest.skip("DEEPGRAM_API_KEY not configured")
+
+    async def _run():
+        from app.adapters.tts_cartesia import CartesiaTTSAdapter
+        tts = CartesiaTTSAdapter()
+        test_phrase = "Hello Sahayak, what is the capital of India?"
+
+        print("\n[DEEPGRAM LIVE] Synthesizing reference audio with Cartesia...")
+        audio_chunks = []
+        async for chunk in tts.synthesize_stream(test_phrase):
+            audio_chunks.append(chunk)
+
+        full_pcm = b"".join(audio_chunks)
+        print(f"[DEEPGRAM LIVE] Generated {len(full_pcm)} bytes of 16kHz PCM. Streaming to Deepgram STT...")
+
+        stt = DeepgramSTTAdapter(api_key=settings.DEEPGRAM_API_KEY)
+
+        async def audio_gen():
+            chunk_size = 640
+            for i in range(0, len(full_pcm), chunk_size):
+                yield full_pcm[i:i+chunk_size]
+                await asyncio.sleep(0.015)
+            # Trailing silence for endpointing
+            silence = b"\x00" * 9600
+            for i in range(0, len(silence), chunk_size):
+                yield silence[i:i+chunk_size]
+                await asyncio.sleep(0.015)
+
+        collected = []
+        import time
+        start = time.perf_counter()
+        async for transcript in stt.stream_audio_frames(audio_gen()):
+            elapsed = (time.perf_counter() - start) * 1000
+            print(f"[DEEPGRAM LIVE] [{elapsed:.1f}ms] Received transcript: '{transcript}'")
+            collected.append(transcript)
+
+        assert len(collected) > 0, "No transcript returned from Deepgram"
+        final_transcript = collected[-1].lower()
+        print(f"[DEEPGRAM LIVE] Final Transcription: '{collected[-1]}'")
+        assert any(k in final_transcript for k in ["sahayak", "capital", "india"]), (
+            f"Expected keywords not found in transcript: '{final_transcript}'"
+        )
+
+    asyncio.run(_run())

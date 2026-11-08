@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     # STT Provider (Deepgram / Sarvam)
     DEEPGRAM_API_KEY: Optional[str] = None
+    DEEPGRAM_MODEL: str = "nova-2"
+    DEEPGRAM_LANGUAGE: str = "en-IN"
     SARVAM_API_KEY: Optional[str] = None
 
     # LLM Provider (Groq / Gemini)

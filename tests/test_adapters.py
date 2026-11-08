@@ -78,3 +78,36 @@ def test_cartesia_live_stream_synthesis():
         assert total_bytes > 5000
 
     asyncio.run(_run())
+
+def test_transcript_accumulator():
+    """Verify phrase accumulation and speech_final endpointing."""
+    from app.adapters.stt_deepgram import TranscriptAccumulator
+
+    acc = TranscriptAccumulator()
+    r1 = acc.process_result(is_final=False, speech_final=False, text="Hello")
+    assert r1 == {"type": "interim", "text": "Hello"}
+
+    r2 = acc.process_result(is_final=True, speech_final=False, text="Hello world")
+    assert r2 == {"type": "interim", "text": "Hello world"}
+
+    r3 = acc.process_result(is_final=True, speech_final=True, text="from Deepgram.")
+    assert r3 == {"type": "final", "text": "Hello world from Deepgram."}
+
+def test_deepgram_adapter_mock_fallback():
+    """Verify Deepgram STT adapter fallback when API key is None."""
+    from app.adapters.stt_deepgram import DeepgramSTTAdapter
+
+    async def _run():
+        adapter = DeepgramSTTAdapter(api_key=None)
+        
+        async def mock_audio():
+            yield b"\x00" * 640
+
+        transcripts = []
+        async for text in adapter.stream_audio_frames(mock_audio()):
+            transcripts.append(text)
+
+        assert len(transcripts) == 1
+        assert "Sahayak" in transcripts[0]
+
+    asyncio.run(_run())
