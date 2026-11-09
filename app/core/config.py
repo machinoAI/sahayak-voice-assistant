@@ -40,6 +40,6 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: Optional[str] = None
     WEB_SEARCH_ENABLED: bool = True
     WEB_SEARCH_MAX_RESULTS: int = 2
-    WEB_SEARCH_TIMEOUT_SECONDS: float = 2.5
+    WEB_SEARCH_TIMEOUT_SECONDS: float = 4.0
 
 settings = Settings()
