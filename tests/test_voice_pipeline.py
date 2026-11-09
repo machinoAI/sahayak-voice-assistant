@@ -241,3 +241,207 @@ def test_orchestrator_web_search_trigger_on_temporal_query():
         assert "Live web search result: India news today." in recorded_prompts[0]
 
     asyncio.run(_run())
+
+def test_crag_high_confidence_bypasses_web_search():
+    """Verify CRAG CORRECT state: score >= 0.82 bypasses web search completely."""
+    from app.adapters.semantic_router import SemanticRouterAdapter
+
+    async def _run():
+        mock_stt = MagicMock()
+        mock_vdb = MagicMock()
+        mock_vdb.hybrid_search = AsyncMock(return_value=[
+            RetrievedDocument(id="local-kisan", text="PM Kisan scheme provides ₹6000 per year.", score=0.94)
+        ])
+        mock_search = MagicMock()
+        mock_search.search = AsyncMock()
+
+        recorded_prompts = []
+        mock_llm = MagicMock()
+        async def mock_tokens(prompt):
+            recorded_prompts.append(prompt)
+            yield "PM Kisan provides financial assistance to farmers."
+        mock_llm.stream_tokens = MagicMock(side_effect=mock_tokens)
+
+        mock_tts = MagicMock()
+        async def mock_tts_stream(text):
+            yield b"\x00" * 640
+        mock_tts.synthesize_stream = MagicMock(side_effect=mock_tts_stream)
+
+        orchestrator = VoiceRAGOrchestrator(
+            stt=mock_stt,
+            vdb=mock_vdb,
+            llm=mock_llm,
+            tts=mock_tts,
+            search=mock_search,
+            router=SemanticRouterAdapter(),
+        )
+        mock_ws = AsyncMock()
+
+        tracker = await orchestrator.process_voice_turn(
+            "What is the eligibility criteria for PM Kisan scheme?", mock_ws
+        )
+
+        steps = tracker.step_history
+        assert "ROUTER_CLASSIFY_COMPLETE" in steps
+        assert "WEB_SEARCH_START" not in steps
+        assert "WEB_SEARCH_COMPLETE" not in steps
+        mock_search.search.assert_not_called()
+        assert len(recorded_prompts) == 1
+        assert "PM Kisan scheme provides ₹6000 per year." in recorded_prompts[0]
+
+    asyncio.run(_run())
+
+def test_crag_ambiguous_merges_local_and_web_docs():
+    """Verify CRAG AMBIGUOUS state: 0.55 <= score < 0.82 merges local background with web facts."""
+    from app.adapters.semantic_router import SemanticRouterAdapter
+
+    async def _run():
+        mock_stt = MagicMock()
+        mock_vdb = MagicMock()
+        mock_vdb.hybrid_search = AsyncMock(return_value=[
+            RetrievedDocument(id="local-doc", text="Baseline government subsidy guidelines.", score=0.68)
+        ])
+        mock_search = MagicMock()
+        mock_search.search = AsyncMock(return_value=[
+            RetrievedDocument(id="web-doc", text="Recent 2026 subsidy amendment update.", score=0.91)
+        ])
+
+        recorded_prompts = []
+        mock_llm = MagicMock()
+        async def mock_tokens(prompt):
+            recorded_prompts.append(prompt)
+            yield "The subsidy was amended recently."
+        mock_llm.stream_tokens = MagicMock(side_effect=mock_tokens)
+
+        mock_tts = MagicMock()
+        async def mock_tts_stream(text):
+            yield b"\x00" * 640
+        mock_tts.synthesize_stream = MagicMock(side_effect=mock_tts_stream)
+
+        orchestrator = VoiceRAGOrchestrator(
+            stt=mock_stt,
+            vdb=mock_vdb,
+            llm=mock_llm,
+            tts=mock_tts,
+            search=mock_search,
+            router=SemanticRouterAdapter(),
+        )
+        mock_ws = AsyncMock()
+
+        tracker = await orchestrator.process_voice_turn(
+            "Did government change the subsidy rules recently?", mock_ws
+        )
+
+        steps = tracker.step_history
+        assert "ROUTER_CLASSIFY_COMPLETE" in steps
+        assert "WEB_SEARCH_START" in steps
+        assert "WEB_SEARCH_COMPLETE" in steps
+        mock_search.search.assert_called_once()
+
+        # Both local and web context must be present in the prompt
+        assert len(recorded_prompts) == 1
+        assert "Recent 2026 subsidy amendment update." in recorded_prompts[0]
+        assert "Baseline government subsidy guidelines." in recorded_prompts[0]
+
+    asyncio.run(_run())
+
+def test_crag_low_confidence_suppresses_local_docs():
+    """Verify CRAG INCORRECT state: score < 0.55 suppresses irrelevant local docs and uses web search."""
+    from app.adapters.semantic_router import SemanticRouterAdapter
+
+    async def _run():
+        mock_stt = MagicMock()
+        mock_vdb = MagicMock()
+        mock_vdb.hybrid_search = AsyncMock(return_value=[
+            RetrievedDocument(id="irrelevant-doc", text="Irrelevant agricultural welfare text.", score=0.38)
+        ])
+        mock_search = MagicMock()
+        mock_search.search = AsyncMock(return_value=[
+            RetrievedDocument(id="web-answer", text="George Washington was the first US president.", score=0.99)
+        ])
+
+        recorded_prompts = []
+        mock_llm = MagicMock()
+        async def mock_tokens(prompt):
+            recorded_prompts.append(prompt)
+            yield "George Washington was the first president."
+        mock_llm.stream_tokens = MagicMock(side_effect=mock_tokens)
+
+        mock_tts = MagicMock()
+        async def mock_tts_stream(text):
+            yield b"\x00" * 640
+        mock_tts.synthesize_stream = MagicMock(side_effect=mock_tts_stream)
+
+        orchestrator = VoiceRAGOrchestrator(
+            stt=mock_stt,
+            vdb=mock_vdb,
+            llm=mock_llm,
+            tts=mock_tts,
+            search=mock_search,
+            router=SemanticRouterAdapter(),
+        )
+        mock_ws = AsyncMock()
+
+        tracker = await orchestrator.process_voice_turn(
+            "Who was the first president of the United States?", mock_ws
+        )
+
+        steps = tracker.step_history
+        assert "ROUTER_CLASSIFY_COMPLETE" in steps
+        assert "WEB_SEARCH_START" in steps
+        assert "WEB_SEARCH_COMPLETE" in steps
+        mock_search.search.assert_called_once()
+
+        # Web context must be present; irrelevant local doc must be suppressed!
+        assert len(recorded_prompts) == 1
+        assert "George Washington was the first US president." in recorded_prompts[0]
+        assert "Irrelevant agricultural welfare text." not in recorded_prompts[0]
+
+    asyncio.run(_run())
+
+def test_speculative_tavily_dispatch_on_temporal_intent():
+    """Verify speculative concurrent dispatch when semantic router detects REALTIME_TEMPORAL."""
+    from app.adapters.semantic_router import SemanticRouterAdapter
+
+    async def _run():
+        mock_stt = MagicMock()
+        mock_vdb = MagicMock()
+        mock_vdb.hybrid_search = AsyncMock(return_value=[
+            RetrievedDocument(id="local-doc", text="Local news text.", score=0.52)
+        ])
+        mock_search = MagicMock()
+        mock_search.search = AsyncMock(return_value=[
+            RetrievedDocument(id="web-doc", text="Live breaking news update today in India.", score=0.99)
+        ])
+
+        mock_llm = MagicMock()
+        async def mock_tokens(prompt):
+            yield "Here are today's headlines."
+        mock_llm.stream_tokens = MagicMock(side_effect=mock_tokens)
+
+        mock_tts = MagicMock()
+        async def mock_tts_stream(text):
+            yield b"\x00" * 640
+        mock_tts.synthesize_stream = MagicMock(side_effect=mock_tts_stream)
+
+        orchestrator = VoiceRAGOrchestrator(
+            stt=mock_stt,
+            vdb=mock_vdb,
+            llm=mock_llm,
+            tts=mock_tts,
+            search=mock_search,
+            router=SemanticRouterAdapter(),
+        )
+        mock_ws = AsyncMock()
+
+        tracker = await orchestrator.process_voice_turn(
+            "What is the latest news in India today?", mock_ws
+        )
+
+        steps = tracker.step_history
+        assert "ROUTER_CLASSIFY_COMPLETE" in steps
+        assert "SPECULATIVE_SEARCH_DISPATCHED" in steps
+        assert "WEB_SEARCH_COMPLETE" in steps
+        mock_search.search.assert_called_once()
+
+    asyncio.run(_run())

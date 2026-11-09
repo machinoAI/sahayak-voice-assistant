@@ -18,8 +18,11 @@ from app.interfaces.adapters import (
     LLMClientProtocol,
     TTSClientProtocol,
     WebSearchProtocol,
+    SemanticRouterProtocol,
+    QueryIntent,
     RetrievedDocument,
 )
+from app.core.config import settings
 from app.core.logger import TurnTracker, logger
 from app.services.session_memory import SessionMemory
 
@@ -62,12 +65,14 @@ class VoiceRAGOrchestrator:
         llm: LLMClientProtocol,
         tts: TTSClientProtocol,
         search: Optional[WebSearchProtocol] = None,
+        router: Optional[SemanticRouterProtocol] = None,
     ) -> None:
         self.stt = stt
         self.vdb = vdb
         self.llm = llm
         self.tts = tts
         self.search = search
+        self.router = router
         self._ws_lock = asyncio.Lock()
         self.active_generation_task: Optional[asyncio.Task] = None
         self.active_tts_task: Optional[asyncio.Task] = None
@@ -189,12 +194,42 @@ class VoiceRAGOrchestrator:
         collected_tokens: List[str] = []
 
         try:
-            # 1. Hybrid retrieval (with pronoun/follow-up heuristic augmentation)
+            # 1. Intent Classification (Semantic Router or Temporal Fallback)
             search_query = (
                 session_memory.get_augmented_query(final_transcript)
                 if session_memory is not None
                 else final_transcript
             )
+
+            intent: QueryIntent
+            if self.router and settings.SEMANTIC_ROUTER_ENABLED:
+                intent = self.router.classify_intent(search_query)
+                tracker.log_step("ROUTER_CLASSIFY_COMPLETE", {"intent": intent.value, "router": "semantic"})
+            else:
+                temporal_keywords = {
+                    "today", "latest", "current", "news", "weather",
+                    "score", "price", "update", "now", "yesterday", "recent"
+                }
+                words = [w.lower().strip("?,.!") for w in search_query.split()]
+                if any(w in temporal_keywords for w in words):
+                    intent = QueryIntent.REALTIME_TEMPORAL
+                else:
+                    intent = QueryIntent.LOCAL_SCHEME_FAQ
+                tracker.log_step("ROUTER_CLASSIFY_COMPLETE", {"intent": intent.value, "router": "keyword_fallback"})
+
+            # 2. Speculative Concurrent Web Search Dispatch (for temporal queries)
+            search_task: Optional[asyncio.Task] = None
+            if intent == QueryIntent.REALTIME_TEMPORAL and self.search and settings.WEB_SEARCH_ENABLED:
+                tracker.log_step(
+                    "WEB_SEARCH_START",
+                    {"query": search_query, "trigger": "temporal"},
+                )
+                tracker.log_step("SPECULATIVE_SEARCH_DISPATCHED", {"query": search_query})
+                search_task = asyncio.create_task(
+                    self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
+                )
+
+            # 3. Local Hybrid Vector Retrieval (Qdrant)
             tracker.log_step(
                 "RAG_RETRIEVAL_START",
                 {
@@ -212,29 +247,71 @@ class VoiceRAGOrchestrator:
                 {"docs_retrieved": len(docs), "top_doc_preview": docs[0].text[:40] if docs else "None"},
             )
 
-            # 2. External Web Search (Tavily) Integration
-            # Triggered for real-time temporal queries or low local confidence
-            if self.search:
-                temporal_keywords = {
-                    "today", "latest", "current", "news", "weather",
-                    "score", "price", "update", "now", "yesterday", "recent"
-                }
-                words = [w.lower().strip("?,.!") for w in search_query.split()]
-                has_temporal_intent = any(w in temporal_keywords for w in words)
-                low_local_confidence = not docs or all(d.score < 0.7 for d in docs)
+            # 4. Corrective RAG (CRAG) Tri-State Evaluation & Concurrency Arbitration
+            top_score = max([d.score for d in docs], default=0.0)
 
-                if has_temporal_intent or low_local_confidence:
+            if intent == QueryIntent.REALTIME_TEMPORAL:
+                # Explicit temporal intent: await the speculative search and merge results
+                web_docs: List[RetrievedDocument] = []
+                if search_task:
+                    try:
+                        web_docs = await search_task
+                    except asyncio.CancelledError:
+                        web_docs = []
+                    tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
+                if web_docs:
+                    docs = web_docs + docs
+            elif top_score >= settings.CRAG_HIGH_THRESHOLD:
+                # CORRECT (>= 0.82): High local confidence.
+                # If speculative search was launched, cancel it
+                if search_task and not search_task.done():
+                    search_task.cancel()
+                    tracker.log_step(
+                        "SPECULATIVE_SEARCH_CANCELLED",
+                        {"reason": "high_local_confidence", "score": top_score, "threshold": settings.CRAG_HIGH_THRESHOLD},
+                    )
+            elif top_score < settings.CRAG_LOW_THRESHOLD:
+                # INCORRECT (< 0.55): Local knowledge is absent or irrelevant -> Pure Web Search
+                if not search_task and self.search and settings.WEB_SEARCH_ENABLED:
                     tracker.log_step(
                         "WEB_SEARCH_START",
-                        {
-                            "query": search_query,
-                            "trigger": "temporal" if has_temporal_intent else "fallback",
-                        },
+                        {"query": search_query, "trigger": "crag_low_confidence", "score": top_score},
                     )
-                    web_docs = await self.search.search(query=search_query, max_results=2)
+                    search_task = asyncio.create_task(
+                        self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
+                    )
+
+                web_docs = []
+                if search_task:
+                    try:
+                        web_docs = await search_task
+                    except asyncio.CancelledError:
+                        web_docs = []
                     tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
-                    if web_docs:
-                        docs = web_docs + docs
+
+                if web_docs:
+                    docs = web_docs  # Suppress local docs to prevent hallucinations
+            else:
+                # AMBIGUOUS (0.55 <= score < 0.82): Hybrid Merge
+                if not search_task and self.search and settings.WEB_SEARCH_ENABLED:
+                    tracker.log_step(
+                        "WEB_SEARCH_START",
+                        {"query": search_query, "trigger": "crag_ambiguous", "score": top_score},
+                    )
+                    search_task = asyncio.create_task(
+                        self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
+                    )
+
+                web_docs = []
+                if search_task:
+                    try:
+                        web_docs = await search_task
+                    except asyncio.CancelledError:
+                        web_docs = []
+                    tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
+
+                if web_docs:
+                    docs = web_docs + docs
 
             context_text = "\n".join([doc.text for doc in docs])
 

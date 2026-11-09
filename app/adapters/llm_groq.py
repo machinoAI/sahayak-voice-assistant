@@ -25,13 +25,18 @@ class GroqLLMAdapter:
                 yield token
             return
 
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.6,
-            max_tokens=250,
-            stream=True,
-        )
+        kwargs = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.6,
+            "max_tokens": 350,
+            "stream": True,
+        }
+        # Hide internal reasoning tokens to prevent token exhaustion and reduce TTFT
+        if "gpt-oss" in self.model or "reason" in self.model:
+            kwargs["reasoning_format"] = "hidden"
+
+        stream = await self.client.chat.completions.create(**kwargs)
         async for chunk in stream:
             content = chunk.choices[0].delta.content
             if content:

@@ -3,12 +3,23 @@ Abstract component interfaces enforcing contracts across providers (STT, RAG, LL
 """
 
 from typing import AsyncGenerator, Protocol, List
+from enum import Enum
 from pydantic import BaseModel
+
+class QueryIntent(str, Enum):
+    LOCAL_SCHEME_FAQ = "local_scheme_faq"
+    REALTIME_TEMPORAL = "realtime_temporal"
+    OUT_OF_DOMAIN = "out_of_domain"
 
 class RetrievedDocument(BaseModel):
     id: str
     text: str
     score: float
+
+class SemanticRouterProtocol(Protocol):
+    def classify_intent(self, query: str) -> QueryIntent:
+        """Classifies query intent into pre-defined routing categories in <1ms."""
+        ...
 
 class STTClientProtocol(Protocol):
     async def stream_audio_frames(self, audio_generator: AsyncGenerator[bytes, None]) -> AsyncGenerator[str, None]:
