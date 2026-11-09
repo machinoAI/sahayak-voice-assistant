@@ -3,7 +3,10 @@ Sahayak Voice Assistant FastAPI Application Entrypoint.
 Connects concrete adapters: Edge-TTS, Groq LLM, Qdrant Vector Store, and Deepgram STT.
 """
 
+from pathlib import Path
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
 from app.api.websocket_endpoint import get_voice_router
 from app.adapters.tts_edge import EdgeTTSAdapter
@@ -63,6 +66,17 @@ def create_app() -> FastAPI:
 
     voice_router = get_voice_router(orchestrator)
     app.include_router(voice_router)
+
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse, include_in_schema=False)
+    async def serve_index():
+        index_file = static_dir / "index.html"
+        if index_file.exists():
+            return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
+        return HTMLResponse("<h1>Sahayak Voice Assistant</h1><p>UI loading...</p>")
 
     @app.get("/health")
     async def health_check():

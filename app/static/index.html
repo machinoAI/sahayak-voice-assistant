@@ -1,0 +1,1747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sahayak Voice Assistant — Real-Time RAG & Speculative Execution Inspector</title>
+  <style>
+    :root {
+      --bg-dark: #080b12;
+      --bg-card: rgba(15, 23, 42, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-active: rgba(56, 189, 248, 0.5);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --cyan-glow: #38bdf8;
+      --blue-accent: #2563eb;
+      --emerald-accent: #10b981;
+      --amber-accent: #f59e0b;
+      --rose-accent: #f43f5e;
+      --indigo-accent: #818cf8;
+      --font-mono: "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header Bar */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 24px;
+      background: rgba(10, 15, 25, 0.9);
+      border-bottom: 1px solid var(--border-subtle);
+      backdrop-filter: blur(12px);
+      z-index: 20;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: white;
+      font-size: 16px;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+    }
+
+    .brand-title {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge-sub {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--cyan-glow);
+      background: rgba(56, 189, 248, 0.1);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    .top-telemetry {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .telemetry-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .telemetry-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .telemetry-val {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--cyan-glow);
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--emerald-accent);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--emerald-accent);
+      box-shadow: 0 0 8px var(--emerald-accent);
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* Main Grid Layout */
+    .app-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 16px 24px;
+    }
+
+    /* Canvas Container */
+    .canvas-section {
+      position: relative;
+      background: #060910;
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.8), 0 8px 30px rgba(0, 0, 0, 0.4);
+      min-height: 380px;
+      height: 42vh;
+    }
+
+    #decisionCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .canvas-overlay-legend {
+      position: absolute;
+      top: 14px;
+      left: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: rgba(10, 15, 25, 0.85);
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+      font-size: 11px;
+      backdrop-filter: blur(8px);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+    }
+
+    .legend-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      font-weight: 700;
+    }
+
+    .legend-active {
+      background: var(--cyan-glow);
+      box-shadow: 0 0 6px var(--cyan-glow);
+    }
+
+    .legend-pruned {
+      border: 1.5px solid var(--rose-accent);
+      color: var(--rose-accent);
+    }
+
+    .legend-merged {
+      background: var(--indigo-accent);
+      box-shadow: 0 0 6px var(--indigo-accent);
+    }
+
+    /* Controls & Query Input Section */
+    .controls-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      backdrop-filter: blur(16px);
+    }
+
+    .presets-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .preset-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .preset-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .preset-btn:hover {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: var(--cyan-glow);
+      transform: translateY(-1px);
+    }
+
+    .input-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mic-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 1px solid var(--border-subtle);
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .mic-btn:hover {
+      border-color: var(--cyan-glow);
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.35);
+    }
+
+    .mic-btn.recording {
+      background: linear-gradient(135deg, #e11d48, #9f1239);
+      border-color: var(--rose-accent);
+      box-shadow: 0 0 20px rgba(244, 63, 94, 0.6);
+      animation: pulse-mic 1.5s infinite;
+    }
+
+    @keyframes pulse-mic {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    .input-wrapper {
+      flex: 1;
+      position: relative;
+    }
+
+    .query-input {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 14px;
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .query-input:focus {
+      border-color: var(--cyan-glow);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+    }
+
+    .action-btn {
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      height: 44px;
+    }
+
+    .btn-send {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: white;
+    }
+
+    .btn-send:hover {
+      box-shadow: 0 0 16px rgba(37, 99, 235, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .btn-interrupt {
+      background: rgba(244, 63, 94, 0.12);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      color: var(--rose-accent);
+    }
+
+    .btn-interrupt:hover {
+      background: rgba(244, 63, 94, 0.25);
+      border-color: var(--rose-accent);
+    }
+
+    .btn-reset {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+    }
+
+    .btn-reset:hover {
+      color: var(--text-main);
+      border-color: var(--text-muted);
+    }
+
+    .transcript-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      min-height: 24px;
+      color: var(--text-muted);
+    }
+
+    .transcript-tag {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--cyan-glow);
+    }
+
+    .transcript-text {
+      color: var(--text-main);
+      font-weight: 500;
+    }
+
+    .transcript-interim {
+      color: #64748b;
+      font-style: italic;
+    }
+
+    /* 3-Column Real-time Inspector */
+    .inspector-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      flex: 1;
+    }
+
+    .panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      backdrop-filter: blur(14px);
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(15, 23, 42, 0.5);
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+    }
+
+    .panel-content {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      max-height: 380px;
+    }
+
+    /* Sub-cards inside Panels */
+    .tool-card {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .tool-card.active {
+      border-color: var(--cyan-glow);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+    }
+
+    .tool-card.pruned {
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.04);
+    }
+
+    .tool-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .tool-name {
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tool-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .badge-ok { background: rgba(16, 185, 129, 0.15); color: var(--emerald-accent); }
+    .badge-warn { background: rgba(245, 158, 11, 0.15); color: var(--amber-accent); }
+    .badge-pruned { background: rgba(244, 63, 94, 0.15); color: var(--rose-accent); }
+    .badge-info { background: rgba(56, 189, 248, 0.15); color: var(--cyan-glow); }
+
+    .tool-snippet {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #cbd5e1;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 6px 8px;
+      border-radius: 6px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 90px;
+      overflow-y: auto;
+    }
+
+    /* CRAG Arbiter Gauge */
+    .gauge-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .gauge-bar-track {
+      height: 12px;
+      background: #1e293b;
+      border-radius: 6px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+    }
+
+    .gauge-segment-low {
+      width: 55%;
+      background: linear-gradient(90deg, #f43f5e, #f97316);
+      opacity: 0.7;
+    }
+
+    .gauge-segment-ambiguous {
+      width: 27%;
+      background: #f59e0b;
+      opacity: 0.7;
+    }
+
+    .gauge-segment-high {
+      width: 18%;
+      background: #10b981;
+      opacity: 0.7;
+    }
+
+    .gauge-pointer {
+      position: absolute;
+      top: -2px;
+      width: 4px;
+      height: 16px;
+      background: white;
+      box-shadow: 0 0 8px white;
+      border-radius: 2px;
+      transition: left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .gauge-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .crag-decision-banner {
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.4;
+      border: 1px solid transparent;
+    }
+
+    .crag-correct {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.35);
+      color: #34d399;
+    }
+
+    .crag-ambiguous {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.35);
+      color: #fbbf24;
+    }
+
+    .crag-incorrect {
+      background: rgba(244, 63, 94, 0.12);
+      border-color: rgba(244, 63, 94, 0.35);
+      color: #fb7185;
+    }
+
+    /* Live LLM Stream Terminal */
+    .stream-terminal {
+      background: #020617;
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.55;
+      color: #e2e8f0;
+      min-height: 120px;
+      max-height: 180px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .token-cursor {
+      display: inline-block;
+      width: 7px;
+      height: 13px;
+      background: var(--cyan-glow);
+      margin-left: 2px;
+      vertical-align: middle;
+      animation: blink 0.8s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* Audio Waveform Canvas */
+    .audio-viz-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    #audioCanvas {
+      width: 100%;
+      height: 48px;
+      display: block;
+      background: #040711;
+      border-radius: 6px;
+    }
+
+    .audio-status-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .inspector-grid {
+        grid-template-columns: 1fr;
+      }
+      .canvas-section {
+        height: 320px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">S</div>
+      <div>
+        <div class="brand-title">
+          Sahayak Voice Assistant
+          <span class="badge-sub">v0.1.0-stream</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="top-telemetry">
+      <div class="telemetry-chip">
+        <span class="telemetry-label">Router</span>
+        <span class="telemetry-val" id="topRouterMs">0.1ms</span>
+      </div>
+      <div class="telemetry-chip">
+        <span class="telemetry-label">Qdrant</span>
+        <span class="telemetry-val" id="topVdbMs">--</span>
+      </div>
+      <div class="telemetry-chip">
+        <span class="telemetry-label">TTFT</span>
+        <span class="telemetry-val" id="topTtftMs">--</span>
+      </div>
+      <div class="telemetry-chip">
+        <span class="telemetry-label">TTFAB</span>
+        <span class="telemetry-val" id="topTtfabMs">--</span>
+      </div>
+      <div class="telemetry-chip">
+        <span class="telemetry-label">Total Turn</span>
+        <span class="telemetry-val" id="topTotalMs">--</span>
+      </div>
+      <div class="connection-status" id="wsStatus">
+        <div class="status-dot"></div>
+        <span>Connected</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="app-container">
+
+    <!-- Top Canvas: Neural Branching Decision Tree -->
+    <div class="canvas-section">
+      <div class="canvas-overlay-legend">
+        <div class="legend-item">
+          <span class="legend-indicator legend-active"></span> Active Branch
+        </div>
+        <div class="legend-item">
+          <span class="legend-indicator legend-pruned">✕</span> CRAG Pruned
+        </div>
+        <div class="legend-item">
+          <span class="legend-indicator legend-merged"></span> Speculative/Merged
+        </div>
+      </div>
+      <canvas id="decisionCanvas"></canvas>
+    </div>
+
+    <!-- Controls & Presets -->
+    <div class="controls-card">
+      <div class="presets-row">
+        <span class="preset-label">Test Scenarios:</span>
+        <button class="preset-btn" onclick="runPreset('pm_kisan')">
+          <span>🌾</span> PM Kisan (Local Scheme / High Conf)
+        </button>
+        <button class="preset-btn" onclick="runPreset('temporal_news')">
+          <span>🌦️</span> Today's News (Temporal Speculative)
+        </button>
+        <button class="preset-btn" onclick="runPreset('fertilizer_subsidy')">
+          <span>⚖️</span> Fertilizer Subsidy (Ambiguous Hybrid)
+        </button>
+        <button class="preset-btn" onclick="runPreset('us_president')">
+          <span>🌍</span> US President (Out of Domain)
+        </button>
+      </div>
+
+      <div class="input-bar-row">
+        <button class="mic-btn" id="micBtn" onclick="toggleMicrophone()" title="Toggle Live Microphone Stream">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+
+        <div class="input-wrapper">
+          <input 
+            type="text" 
+            id="queryInput" 
+            class="query-input" 
+            placeholder="Speak into mic or type a query (e.g. 'What is PM Kisan scheme eligibility?')..."
+            onkeydown="if(event.key === 'Enter') submitTextQuery()"
+          />
+        </div>
+
+        <button class="action-btn btn-send" onclick="submitTextQuery()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+          Ask
+        </button>
+
+        <button class="action-btn btn-interrupt" onclick="triggerBargeIn()" title="Interrupt assistant & clear buffers">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="6" y="4" width="4" height="16"/>
+            <rect x="14" y="4" width="4" height="16"/>
+          </svg>
+          Barge-In
+        </button>
+
+        <button class="action-btn btn-reset" onclick="resetSession()" title="Clear dialogue memory">
+          Reset Memory
+        </button>
+      </div>
+
+      <div class="transcript-banner">
+        <span class="transcript-tag">Live STT:</span>
+        <span id="finalTranscript" class="transcript-text">Waiting for user query...</span>
+        <span id="interimTranscript" class="transcript-interim"></span>
+      </div>
+    </div>
+
+    <!-- 3-Column Telemetry & Execution Inspector -->
+    <div class="inspector-grid">
+
+      <!-- Column 1: Tool Calls & Retrieval Inspector -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>⚙️</span> Tool Calls & Retrieval
+          </div>
+          <span class="panel-badge" id="toolCountBadge">0 Calls</span>
+        </div>
+        <div class="panel-content">
+          <!-- Router Tool Card -->
+          <div class="tool-card" id="cardRouter">
+            <div class="tool-header-row">
+              <span class="tool-name">
+                <span>🎯</span> Semantic Router
+              </span>
+              <span class="tool-badge badge-info" id="badgeRouterIntent">IDLE</span>
+            </div>
+            <div class="tool-snippet" id="snippetRouter">Waiting for query...</div>
+          </div>
+
+          <!-- Qdrant Tool Card -->
+          <div class="tool-card" id="cardQdrant">
+            <div class="tool-header-row">
+              <span class="tool-name">
+                <span>🔍</span> Qdrant Hybrid Search
+              </span>
+              <span class="tool-badge badge-ok" id="badgeQdrantScore">Score: --</span>
+            </div>
+            <div class="tool-snippet" id="snippetQdrant">Waiting for retrieval...</div>
+          </div>
+
+          <!-- Tavily Tool Card -->
+          <div class="tool-card" id="cardTavily">
+            <div class="tool-header-row">
+              <span class="tool-name">
+                <span>🌐</span> Tavily Web Search
+              </span>
+              <span class="tool-badge badge-info" id="badgeTavilyStatus">IDLE</span>
+            </div>
+            <div class="tool-snippet" id="snippetTavily">No search launched.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Column 2: CRAG Decision Arbiter & Reasoning -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>⚖️</span> CRAG Arbitration & Reasoning
+          </div>
+          <span class="panel-badge" id="cragGateBadge">STANDBY</span>
+        </div>
+        <div class="panel-content">
+          <!-- Gauge -->
+          <div class="gauge-wrapper">
+            <div class="gauge-labels">
+              <span>0.0 (Incorrect)</span>
+              <span>0.55 (Ambiguous)</span>
+              <span>0.82 (Correct)</span>
+              <span>1.0</span>
+            </div>
+            <div class="gauge-bar-track">
+              <div class="gauge-segment-low" title="Incorrect (<0.55)"></div>
+              <div class="gauge-segment-ambiguous" title="Ambiguous (0.55-0.82)"></div>
+              <div class="gauge-segment-high" title="Correct (>=0.82)"></div>
+              <div class="gauge-pointer" id="cragPointer" style="left: 0%;"></div>
+            </div>
+          </div>
+
+          <div class="crag-decision-banner" id="cragDecisionBanner">
+            Awaiting query to evaluate local retrieval confidence vs external search.
+          </div>
+
+          <div class="tool-card">
+            <div class="tool-header-row">
+              <span class="tool-name">🧠 Decision Rationale</span>
+            </div>
+            <div class="tool-snippet" id="cragRationale">
+              • Score &ge; 0.82: Trust local scheme knowledge directly; prune external web search.<br>
+              • 0.55 &le; Score &lt; 0.82: Ambiguous match; merge local baseline with live web search.<br>
+              • Score &lt; 0.55: Low confidence; suppress local docs to prevent hallucinations.
+            </div>
+          </div>
+
+          <div class="tool-card">
+            <div class="tool-header-row">
+              <span class="tool-name">💬 Dialogue Memory</span>
+              <span class="tool-badge badge-info" id="sessionTurnCount">0 Turns</span>
+            </div>
+            <div class="tool-snippet" id="sessionHistorySnippet">Session clean. Rolling memory empty.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Column 3: Live LLM Stream & Audio Synthesis -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>⚡</span> LLM Stream & Voice Output
+          </div>
+          <span class="panel-badge" id="llmModelBadge">Groq</span>
+        </div>
+        <div class="panel-content">
+          <div class="stream-terminal" id="tokenStreamBox">
+            <span id="tokenStreamText">Assistant streaming response will appear here in real-time...</span>
+            <span class="token-cursor" id="tokenCursor" style="display: none;"></span>
+          </div>
+
+          <div class="audio-viz-card">
+            <div class="audio-status-row">
+              <span id="audioStatusText">Audio Output: Idle</span>
+              <span id="audioChunksCount">0 Chunks</span>
+            </div>
+            <canvas id="audioCanvas"></canvas>
+          </div>
+
+          <div class="tool-card">
+            <div class="tool-header-row">
+              <span class="tool-name">⏱️ Latency Breakdown</span>
+            </div>
+            <div class="tool-snippet" id="latencyBreakdownSnippet">
+              • Classification: --<br>
+              • Vector Retrieval: --<br>
+              • Web Search: --<br>
+              • LLM TTFT: --<br>
+              • TTS TTFAB: --<br>
+              • Total Latency: --
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    /* =========================================================================
+       1. GLOBAL STATE & WEBSOCKET CLIENT
+       ========================================================================= */
+    const state = {
+      ws: null,
+      isConnected: false,
+      turnId: null,
+      queryText: "",
+      routerIntent: null,
+      routerLatency: 0,
+      vdbScore: null,
+      vdbLatency: 0,
+      vdbDocs: [],
+      speculativeSearchDispatched: false,
+      speculativeSearchCancelled: false,
+      webSearchComplete: false,
+      webDocs: [],
+      cragDecision: null,
+      cragAction: "",
+      tokens: [],
+      ttft: null,
+      ttfab: null,
+      totalTurnMs: null,
+      audioChunksReceived: 0,
+      isRecording: false,
+      audioCtx: null,
+      micMediaStream: null,
+      audioPlaybackQueue: [],
+      isPlayingAudio: false,
+      analyser: null,
+    };
+
+    function connectWebSocket() {
+      const loc = window.location;
+      const wsProtocol = loc.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${wsProtocol}//${loc.host}/ws/voice`;
+      
+      state.ws = new WebSocket(wsUrl);
+      state.ws.binaryType = "arraybuffer";
+
+      state.ws.onopen = () => {
+        state.isConnected = true;
+        document.getElementById("wsStatus").innerHTML = '<div class="status-dot"></div><span>Connected</span>';
+        document.getElementById("wsStatus").style.color = "var(--emerald-accent)";
+      };
+
+      state.ws.onclose = () => {
+        state.isConnected = false;
+        document.getElementById("wsStatus").innerHTML = '<div class="status-dot" style="background:var(--rose-accent);box-shadow:none;"></div><span>Disconnected</span>';
+        document.getElementById("wsStatus").style.color = "var(--rose-accent)";
+        setTimeout(connectWebSocket, 2000);
+      };
+
+      state.ws.onerror = (err) => {
+        console.error("WebSocket Error:", err);
+      };
+
+      state.ws.onmessage = async (evt) => {
+        if (typeof evt.data === "string") {
+          try {
+            const msg = JSON.parse(evt.data);
+            handleServerEvent(msg);
+          } catch (e) {
+            console.error("Failed to parse JSON message:", e);
+          }
+        } else if (evt.data instanceof ArrayBuffer) {
+          // Binary audio packet
+          state.audioChunksReceived++;
+          document.getElementById("audioChunksCount").innerText = `${state.audioChunksReceived} Chunks`;
+          enqueueAudioChunk(evt.data);
+        }
+      };
+    }
+
+    connectWebSocket();
+
+    /* =========================================================================
+       2. SERVER EVENT DISPATCHER
+       ========================================================================= */
+    function handleServerEvent(msg) {
+      const eventType = msg.event;
+
+      if (eventType === "INTERIM_TRANSCRIPT") {
+        document.getElementById("interimTranscript").innerText = msg.text;
+      } else if (eventType === "FINAL_TRANSCRIPT") {
+        document.getElementById("interimTranscript").innerText = "";
+        document.getElementById("finalTranscript").innerText = msg.text;
+        state.queryText = msg.text;
+        resetTurnState(msg.text);
+      } else if (eventType === "PIPELINE_STEP") {
+        handlePipelineStep(msg.step, msg.data, msg.elapsed_ms);
+      } else if (eventType === "LLM_TOKEN") {
+        handleLlmToken(msg.token, msg.token_count);
+      } else if (eventType === "CLEAR_AUDIO_BUFFER") {
+        handleBufferClear();
+      } else if (eventType === "SESSION_RESET") {
+        document.getElementById("sessionHistorySnippet").innerText = "Session memory wiped clean.";
+        document.getElementById("sessionTurnCount").innerText = "0 Turns";
+      }
+    }
+
+    function resetTurnState(query) {
+      state.queryText = query;
+      state.routerIntent = null;
+      state.routerLatency = 0;
+      state.vdbScore = null;
+      state.vdbLatency = 0;
+      state.vdbDocs = [];
+      state.speculativeSearchDispatched = false;
+      state.speculativeSearchCancelled = false;
+      state.webSearchComplete = false;
+      state.webDocs = [];
+      state.cragDecision = null;
+      state.cragAction = "";
+      state.tokens = [];
+      state.ttft = null;
+      state.ttfab = null;
+      state.totalTurnMs = null;
+      state.audioChunksReceived = 0;
+
+      document.getElementById("tokenStreamText").innerText = "";
+      document.getElementById("tokenCursor").style.display = "inline-block";
+      document.getElementById("topVdbMs").innerText = "--";
+      document.getElementById("topTtftMs").innerText = "--";
+      document.getElementById("topTtfabMs").innerText = "--";
+      document.getElementById("topTotalMs").innerText = "--";
+
+      document.getElementById("cardRouter").className = "tool-card active";
+      document.getElementById("cardQdrant").className = "tool-card";
+      document.getElementById("cardTavily").className = "tool-card";
+      document.getElementById("badgeRouterIntent").innerText = "ROUTING...";
+      document.getElementById("badgeQdrantScore").innerText = "SEARCHING...";
+      document.getElementById("badgeTavilyStatus").innerText = "IDLE";
+      document.getElementById("cragPointer").style.left = "0%";
+      document.getElementById("cragDecisionBanner").className = "crag-decision-banner";
+      document.getElementById("cragDecisionBanner").innerText = "Evaluating confidence...";
+    }
+
+    function handlePipelineStep(step, data, elapsedMs) {
+      if (step === "TURN_INITIATED") {
+        state.queryText = data.transcript || state.queryText;
+        if (data.augmented && data.augmented_query) {
+          document.getElementById("sessionHistorySnippet").innerText = `Augmented Query: "${data.augmented_query}"`;
+        }
+      } else if (step === "ROUTER_CLASSIFY_COMPLETE") {
+        state.routerIntent = data.intent;
+        state.routerLatency = data.latency_ms || 0.1;
+        document.getElementById("topRouterMs").innerText = `${state.routerLatency}ms`;
+        document.getElementById("badgeRouterIntent").innerText = data.intent;
+        document.getElementById("badgeRouterIntent").className = "tool-badge badge-info";
+        document.getElementById("snippetRouter").innerText = `Classified as ${data.intent} in ${state.routerLatency}ms via ${data.router}.`;
+        document.getElementById("cardRouter").className = "tool-card";
+      } else if (step === "SPECULATIVE_SEARCH_DISPATCHED") {
+        state.speculativeSearchDispatched = true;
+        document.getElementById("cardTavily").className = "tool-card active";
+        document.getElementById("badgeTavilyStatus").innerText = "SPECULATIVE IN-FLIGHT";
+        document.getElementById("badgeTavilyStatus").className = "tool-badge badge-warn";
+        document.getElementById("snippetTavily").innerText = `Speculatively launched external search: "${data.query}"`;
+      } else if (step === "RAG_RETRIEVAL_COMPLETE") {
+        state.vdbScore = data.top_score;
+        state.vdbLatency = data.latency_ms;
+        state.vdbDocs = data.docs || [];
+        document.getElementById("topVdbMs").innerText = `${data.latency_ms}ms`;
+        document.getElementById("badgeQdrantScore").innerText = `Score: ${data.top_score.toFixed(2)}`;
+        document.getElementById("badgeQdrantScore").className = data.top_score >= 0.82 ? "tool-badge badge-ok" : "tool-badge badge-warn";
+        
+        let docsPreview = `Found ${data.docs_count} docs in ${data.latency_ms}ms.\n`;
+        if (state.vdbDocs.length > 0) {
+          docsPreview += `Top Doc [${state.vdbDocs[0].score.toFixed(2)}]: ${state.vdbDocs[0].text}`;
+        }
+        document.getElementById("snippetQdrant").innerText = docsPreview;
+
+        // Move CRAG gauge pointer
+        const pointerPct = Math.min(100, Math.max(0, data.top_score * 100));
+        document.getElementById("cragPointer").style.left = `${pointerPct}%`;
+      } else if (step === "CRAG_DECISION") {
+        state.cragDecision = data.decision;
+        state.cragAction = data.action;
+        const banner = document.getElementById("cragDecisionBanner");
+        document.getElementById("cragGateBadge").innerText = data.decision;
+
+        if (data.decision === "CORRECT") {
+          banner.className = "crag-decision-banner crag-correct";
+          banner.innerText = `CORRECT (Score ${data.top_score.toFixed(2)} >= ${data.high_threshold}): Authoritative local knowledge found. Web search pruned.`;
+        } else if (data.decision === "AMBIGUOUS") {
+          banner.className = "crag-decision-banner crag-ambiguous";
+          banner.innerText = `AMBIGUOUS (0.55 <= Score < 0.82): Merging local baseline with live web search facts.`;
+        } else if (data.decision === "INCORRECT") {
+          banner.className = "crag-decision-banner crag-incorrect";
+          banner.innerText = `INCORRECT (Score < 0.55): Local docs suppressed to prevent hallucination. Fallback to Web Search.`;
+        } else if (data.decision === "REALTIME_TEMPORAL") {
+          banner.className = "crag-decision-banner crag-ambiguous";
+          banner.innerText = `REALTIME TEMPORAL: Live breaking query detected. Speculative Web results prioritized.`;
+        }
+        document.getElementById("cragRationale").innerText = data.action;
+      } else if (step === "SPECULATIVE_SEARCH_CANCELLED") {
+        state.speculativeSearchCancelled = true;
+        document.getElementById("cardTavily").className = "tool-card pruned";
+        document.getElementById("badgeTavilyStatus").innerText = "CANCELLED (PRUNED)";
+        document.getElementById("badgeTavilyStatus").className = "tool-badge badge-pruned";
+        document.getElementById("snippetTavily").innerText = `Search cancelled by CRAG: Local score ${data.score.toFixed(2)} >= ${data.threshold} threshold. Saved latency & API budget!`;
+      } else if (step === "WEB_SEARCH_START") {
+        document.getElementById("cardTavily").className = "tool-card active";
+        document.getElementById("badgeTavilyStatus").innerText = "SEARCHING...";
+        document.getElementById("badgeTavilyStatus").className = "tool-badge badge-warn";
+        document.getElementById("snippetTavily").innerText = `Trigger: ${data.trigger} | Query: "${data.query}"`;
+      } else if (step === "WEB_SEARCH_COMPLETE") {
+        state.webSearchComplete = true;
+        state.webDocs = data.docs || [];
+        document.getElementById("cardTavily").className = "tool-card";
+        document.getElementById("badgeTavilyStatus").innerText = `${data.docs_count} RESULTS`;
+        document.getElementById("badgeTavilyStatus").className = "tool-badge badge-ok";
+        let webPreview = `Retrieved ${data.docs_count} live web sources.\n`;
+        if (state.webDocs.length > 0) {
+          webPreview += `Web Source: ${state.webDocs[0].text}`;
+        }
+        document.getElementById("snippetTavily").innerText = webPreview;
+      } else if (step === "LLM_FIRST_TOKEN") {
+        state.ttft = data.ttft_ms;
+        document.getElementById("topTtftMs").innerText = `${data.ttft_ms}ms`;
+      } else if (step === "TTS_FIRST_AUDIO_PACKET") {
+        state.ttfab = data.ttfab_ms;
+        document.getElementById("topTtfabMs").innerText = `${data.ttfab_ms}ms`;
+      } else if (step === "TURN_COMPLETED_SUCCESS") {
+        state.totalTurnMs = data.total_turn_ms;
+        document.getElementById("topTotalMs").innerText = `${data.total_turn_ms}ms`;
+        document.getElementById("tokenCursor").style.display = "none";
+        updateLatencyBreakdown();
+        document.getElementById("toolCountBadge").innerText = `${(state.vdbDocs.length > 0 ? 1 : 0) + (state.webSearchComplete ? 1 : 0)} Executed`;
+      }
+    }
+
+    function handleLlmToken(token, count) {
+      state.tokens.push(token);
+      const textNode = document.getElementById("tokenStreamText");
+      textNode.innerText += token;
+      const box = document.getElementById("tokenStreamBox");
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function handleBufferClear() {
+      // Barge-in: flush audio queue and stop current source
+      state.audioPlaybackQueue = [];
+      document.getElementById("audioStatusText").innerText = "Audio Output: Interrupted (Cleared)";
+      document.getElementById("tokenCursor").style.display = "none";
+    }
+
+    function updateLatencyBreakdown() {
+      const text = 
+        `• Classification: ${state.routerLatency || 0.1}ms\n` +
+        `• Vector Retrieval: ${state.vdbLatency || '--'}ms\n` +
+        `• Tavily Speculative: ${state.speculativeSearchCancelled ? 'Cancelled (0ms wait)' : (state.webSearchComplete ? 'Resolved' : 'N/A')}\n` +
+        `• LLM TTFT: ${state.ttft || '--'}ms\n` +
+        `• TTS TTFAB: ${state.ttfab || '--'}ms\n` +
+        `• Total End-to-End: ${state.totalTurnMs || '--'}ms`;
+      document.getElementById("latencyBreakdownSnippet").innerText = text;
+    }
+
+    /* =========================================================================
+       3. INTERACTIVE CONTROLS & TEST PRESETS
+       ========================================================================= */
+    const PRESETS = {
+      pm_kisan: "What is the eligibility criteria for PM Kisan scheme?",
+      temporal_news: "What is the latest news and weather update today?",
+      fertilizer_subsidy: "Did the government change the fertilizer subsidy rules?",
+      us_president: "Who was the first president of the United States?",
+    };
+
+    function runPreset(key) {
+      const q = PRESETS[key];
+      if (!q) return;
+      document.getElementById("queryInput").value = q;
+      submitQuery(q);
+    }
+
+    function submitTextQuery() {
+      const input = document.getElementById("queryInput");
+      const text = input.value.trim();
+      if (!text) return;
+      submitQuery(text);
+    }
+
+    function submitQuery(text) {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        alert("WebSocket is not connected to server.");
+        return;
+      }
+      document.getElementById("finalTranscript").innerText = text;
+      state.queryText = text;
+      resetTurnState(text);
+
+      state.ws.send(JSON.stringify({
+        event: "FINAL_TRANSCRIPT",
+        text: text,
+      }));
+    }
+
+    function triggerBargeIn() {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      state.ws.send(JSON.stringify({ event: "USER_BARGE_IN" }));
+      handleBufferClear();
+    }
+
+    function resetSession() {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      state.ws.send(JSON.stringify({ event: "RESET_SESSION" }));
+    }
+
+    /* =========================================================================
+       4. AUDIO RECORDING & STREAMING (WEB AUDIO API)
+       ========================================================================= */
+    async function initAudioContext() {
+      if (!state.audioCtx) {
+        state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        state.analyser = state.audioCtx.createAnalyser();
+        state.analyser.fftSize = 64;
+      }
+      if (state.audioCtx.state === "suspended") {
+        await state.audioCtx.resume();
+      }
+    }
+
+    async function toggleMicrophone() {
+      if (state.isRecording) {
+        stopMicrophone();
+      } else {
+        await startMicrophone();
+      }
+    }
+
+    async function startMicrophone() {
+      try {
+        await initAudioContext();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        });
+
+        state.micMediaStream = stream;
+        state.isRecording = true;
+        const micBtn = document.getElementById("micBtn");
+        micBtn.classList.add("recording");
+        document.getElementById("finalTranscript").innerText = "Listening to microphone...";
+
+        const source = state.audioCtx.createMediaStreamSource(stream);
+        // Process buffer with ScriptProcessor (2048 samples = 128ms chunks)
+        const processor = state.audioCtx.createScriptProcessor(2048, 1, 1);
+
+        processor.onaudioprocess = (e) => {
+          if (!state.isRecording) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          // Convert Float32 to Int16 PCM
+          const pcmBuffer = new ArrayBuffer(inputData.length * 2);
+          const pcmView = new DataView(pcmBuffer);
+          for (let i = 0; i < inputData.length; i++) {
+            let s = Math.max(-1, Math.min(1, inputData[i]));
+            pcmView.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+          }
+
+          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            state.ws.send(pcmBuffer);
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(state.audioCtx.destination);
+        state.micProcessor = processor;
+        state.micSource = source;
+
+      } catch (err) {
+        console.error("Microphone access error:", err);
+        alert("Could not access microphone: " + err.message);
+        stopMicrophone();
+      }
+    }
+
+    function stopMicrophone() {
+      state.isRecording = false;
+      const micBtn = document.getElementById("micBtn");
+      micBtn.classList.remove("recording");
+
+      if (state.micProcessor) {
+        state.micProcessor.disconnect();
+        state.micProcessor = null;
+      }
+      if (state.micSource) {
+        state.micSource.disconnect();
+        state.micSource = null;
+      }
+      if (state.micMediaStream) {
+        state.micMediaStream.getTracks().forEach(track => track.stop());
+        state.micMediaStream = null;
+      }
+    }
+
+    /* =========================================================================
+       5. AUDIO PLAYBACK & WAVEFORM VISUALIZER
+       ========================================================================= */
+    async function enqueueAudioChunk(arrayBuffer) {
+      await initAudioContext();
+      state.audioPlaybackQueue.push(arrayBuffer);
+      if (!state.isPlayingAudio) {
+        playNextAudioChunk();
+      }
+    }
+
+    async function playNextAudioChunk() {
+      if (state.audioPlaybackQueue.length === 0) {
+        state.isPlayingAudio = false;
+        document.getElementById("audioStatusText").innerText = "Audio Output: Idle";
+        return;
+      }
+
+      state.isPlayingAudio = true;
+      document.getElementById("audioStatusText").innerText = "Audio Output: Streaming...";
+
+      const chunk = state.audioPlaybackQueue.shift();
+      try {
+        const u8 = new Uint8Array(chunk);
+        let audioBuffer = null;
+
+        // Check if chunk is MP3 header (ID3 or sync word 0xFF 0xFB)
+        const isMp3 = (u8.length > 3 && u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) ||
+                      (u8.length > 2 && u8[0] === 0xFF && (u8[1] & 0xE0) === 0xE0);
+
+        if (isMp3) {
+          audioBuffer = await state.audioCtx.decodeAudioData(chunk.slice(0));
+        } else {
+          // Raw linear PCM (16kHz mono, 16-bit signed)
+          const pcmSamples = new Int16Array(chunk);
+          const float32 = new Float32Array(pcmSamples.length);
+          for (let i = 0; i < pcmSamples.length; i++) {
+            float32[i] = pcmSamples[i] / 32768.0;
+          }
+          audioBuffer = state.audioCtx.createBuffer(1, float32.length, 16000);
+          audioBuffer.getChannelData(0).set(float32);
+        }
+
+        const source = state.audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(state.analyser);
+        state.analyser.connect(state.audioCtx.destination);
+
+        source.onended = () => {
+          playNextAudioChunk();
+        };
+        source.start();
+
+      } catch (err) {
+        console.warn("Audio playback chunk warning:", err);
+        playNextAudioChunk();
+      }
+    }
+
+    // Audio Visualizer Canvas Loop
+    const audioCanvas = document.getElementById("audioCanvas");
+    const audioCtx2d = audioCanvas.getContext("2d");
+
+    function renderAudioVisualizer() {
+      requestAnimationFrame(renderAudioVisualizer);
+      const w = audioCanvas.width = audioCanvas.clientWidth;
+      const h = audioCanvas.height = audioCanvas.clientHeight;
+
+      audioCtx2d.fillStyle = "#040711";
+      audioCtx2d.fillRect(0, 0, w, h);
+
+      if (!state.analyser || !state.isPlayingAudio) {
+        // Draw resting baseline
+        audioCtx2d.strokeStyle = "rgba(56, 189, 248, 0.25)";
+        audioCtx2d.lineWidth = 1.5;
+        audioCtx2d.beginPath();
+        audioCtx2d.moveTo(0, h / 2);
+        audioCtx2d.lineTo(w, h / 2);
+        audioCtx2d.stroke();
+        return;
+      }
+
+      const bufferLength = state.analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      state.analyser.getByteTimeDomainData(dataArray);
+
+      audioCtx2d.lineWidth = 2;
+      audioCtx2d.strokeStyle = "#38bdf8";
+      audioCtx2d.shadowBlur = 8;
+      audioCtx2d.shadowColor = "#38bdf8";
+
+      audioCtx2d.beginPath();
+      const sliceWidth = w / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = (v * h) / 2;
+        if (i === 0) {
+          audioCtx2d.moveTo(x, y);
+        } else {
+          audioCtx2d.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+
+      audioCtx2d.lineTo(w, h / 2);
+      audioCtx2d.stroke();
+      audioCtx2d.shadowBlur = 0;
+    }
+    renderAudioVisualizer();
+
+    /* =========================================================================
+       6. THE THINKING CANVAS: NEURAL DECISION TREE & SPLINE VISUALIZER
+       ========================================================================= */
+    const decisionCanvas = document.getElementById("decisionCanvas");
+    const ctx = decisionCanvas.getContext("2d");
+    let animPhase = 0;
+
+    function resizeDecisionCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = decisionCanvas.getBoundingClientRect();
+      decisionCanvas.width = rect.width * dpr;
+      decisionCanvas.height = rect.height * dpr;
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+    }
+    window.addEventListener("resize", resizeDecisionCanvas);
+    setTimeout(resizeDecisionCanvas, 50);
+
+    function drawDotGrid(w, h) {
+      const spacing = 36;
+      ctx.fillStyle = "rgba(148, 163, 184, 0.12)";
+      for (let x = spacing; x < w; x += spacing) {
+        for (let y = spacing; y < h; y += spacing) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function drawBezierSpline(x0, y0, x1, y1, color, glow, isDashed = false) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.2;
+      if (glow) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 10;
+      }
+      if (isDashed) {
+        ctx.setLineDash([4, 4]);
+      }
+
+      const dx = (x1 - x0) * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.bezierCurveTo(x0 + dx, y0, x1 - dx, y1, x1, y1);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawParticleAlongSpline(x0, y0, x1, y1, t, color) {
+      const dx = (x1 - x0) * 0.55;
+      const cx0 = x0 + dx;
+      const cy0 = y0;
+      const cx1 = x1 - dx;
+      const cy1 = y1;
+
+      // Cubic bezier formula
+      const u = 1 - t;
+      const px = u * u * u * x0 + 3 * u * u * t * cx0 + 3 * u * t * t * cx1 + t * t * t * x1;
+      const py = u * u * u * y0 + 3 * u * u * t * cy0 + 3 * u * t * t * cy1 + t * t * t * y1;
+
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawNode(x, y, title, subtitle, status) {
+      // status: 'idle', 'active', 'ok', 'pruned', 'merged'
+      ctx.save();
+
+      let circleColor = "#64748b";
+      let ringColor = "rgba(100, 116, 139, 0.4)";
+      let textColor = "#94a3b8";
+
+      if (status === "active") {
+        circleColor = "#38bdf8";
+        ringColor = "rgba(56, 189, 248, 0.5)";
+        textColor = "#ffffff";
+      } else if (status === "ok") {
+        circleColor = "#10b981";
+        ringColor = "rgba(16, 185, 129, 0.4)";
+        textColor = "#ffffff";
+      } else if (status === "pruned") {
+        circleColor = "#f43f5e";
+        ringColor = "rgba(244, 63, 94, 0.4)";
+        textColor = "#f87171";
+      } else if (status === "merged") {
+        circleColor = "#818cf8";
+        ringColor = "rgba(129, 140, 248, 0.5)";
+        textColor = "#ffffff";
+      }
+
+      // Terminal Node Ring
+      ctx.strokeStyle = ringColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 9, 0, Math.PI * 2);
+      ctx.stroke();
+
+      if (status === "pruned") {
+        // Draw cross marker inside circle (X) as in reference image!
+        ctx.strokeStyle = circleColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x - 3.5, y - 3.5);
+        ctx.lineTo(x + 3.5, y + 3.5);
+        ctx.moveTo(x + 3.5, y - 3.5);
+        ctx.lineTo(x - 3.5, y + 3.5);
+        ctx.stroke();
+      } else {
+        // Center dot
+        ctx.fillStyle = circleColor;
+        if (status === "active" || status === "ok" || status === "merged") {
+          ctx.shadowColor = circleColor;
+          ctx.shadowBlur = 8;
+        }
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      // Title & Subtitle Labels
+      ctx.font = "bold 12px " + getComputedStyle(document.body).fontFamily;
+      ctx.fillStyle = textColor;
+      ctx.textAlign = "left";
+      ctx.fillText(title, x + 16, y - 2);
+
+      if (subtitle) {
+        ctx.font = "10px " + getComputedStyle(document.body).getPropertyValue("--font-mono");
+        ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
+        ctx.fillText(subtitle, x + 16, y + 13);
+      }
+
+      ctx.restore();
+    }
+
+    function renderThinkingCanvas() {
+      requestAnimationFrame(renderThinkingCanvas);
+      const rect = decisionCanvas.getBoundingClientRect();
+      const w = rect.width;
+      const h = rect.height;
+
+      ctx.clearRect(0, 0, w, h);
+      drawDotGrid(w, h);
+
+      animPhase = (animPhase + 0.012) % 1;
+
+      // Coordinate Layout
+      const rootX = 60;
+      const rootY = h * 0.5;
+
+      const routerX = Math.min(380, w * 0.35);
+      const routerY = rootY - (h * 0.28);
+
+      const qdrantX = Math.min(380, w * 0.35);
+      const qdrantY = rootY - (h * 0.09);
+
+      const tavilyX = Math.min(380, w * 0.35);
+      const tavilyY = rootY + (h * 0.22);
+
+      const cragX = Math.min(620, w * 0.58);
+      const cragY = rootY;
+
+      const llmX = Math.min(840, w * 0.78);
+      const llmY = rootY - (h * 0.08);
+
+      const ttsX = Math.min(1040, w * 0.94);
+      const ttsY = rootY + (h * 0.1);
+
+      // Root Query Label
+      ctx.save();
+      ctx.font = "bold 13px " + getComputedStyle(document.body).fontFamily;
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "right";
+      const qText = state.queryText ? `"${state.queryText.slice(0, 22)}${state.queryText.length > 22 ? '...' : ''}"` : "User Query";
+      ctx.fillText(qText, rootX - 14, rootY + 4);
+
+      // Root circle
+      ctx.fillStyle = "#38bdf8";
+      ctx.shadowColor = "#38bdf8";
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(rootX, rootY, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Branch 1: Root -> Semantic Router
+      const routerActive = state.routerIntent !== null;
+      const routerColor = routerActive ? "#38bdf8" : "rgba(100, 116, 139, 0.4)";
+      drawBezierSpline(rootX, rootY, routerX, routerY, routerColor, routerActive);
+      if (routerActive) {
+        drawParticleAlongSpline(rootX, rootY, routerX, routerY, animPhase, "#38bdf8");
+      }
+      drawNode(
+        routerX, routerY, 
+        "Semantic Router (OATS)", 
+        state.routerIntent ? `${state.routerIntent} (${state.routerLatency}ms)` : "Evaluating...",
+        routerActive ? "ok" : "idle"
+      );
+
+      // Branch 2: Root -> Qdrant Vector Retrieval
+      const qdrantActive = state.vdbScore !== null;
+      const qdrantColor = qdrantActive ? "#10b981" : "rgba(100, 116, 139, 0.4)";
+      drawBezierSpline(rootX, rootY, qdrantX, qdrantY, qdrantColor, qdrantActive);
+      if (qdrantActive) {
+        drawParticleAlongSpline(rootX, rootY, qdrantX, qdrantY, (animPhase + 0.3) % 1, "#10b981");
+      }
+      drawNode(
+        qdrantX, qdrantY, 
+        "Qdrant Hybrid Search", 
+        state.vdbScore !== null ? `Score: ${state.vdbScore.toFixed(2)} (${state.vdbLatency}ms)` : "Hybrid retrieval...",
+        qdrantActive ? (state.vdbScore >= 0.82 ? "ok" : "active") : "idle"
+      );
+
+      // Branch 3: Root -> Speculative Tavily Web Search
+      let tavilyColor = "rgba(100, 116, 139, 0.4)";
+      let tavilyStatus = "idle";
+      let tavilySubtitle = "Standby";
+
+      if (state.speculativeSearchCancelled) {
+        tavilyColor = "#f43f5e";
+        tavilyStatus = "pruned";
+        tavilySubtitle = "Cancelled (CRAG Score >= 0.82)";
+      } else if (state.webSearchComplete) {
+        tavilyColor = "#818cf8";
+        tavilyStatus = "merged";
+        tavilySubtitle = `${state.webDocs.length} Web Docs Retrieved`;
+      } else if (state.speculativeSearchDispatched) {
+        tavilyColor = "#f59e0b";
+        tavilyStatus = "active";
+        tavilySubtitle = "Speculative in-flight...";
+      }
+
+      drawBezierSpline(rootX, rootY, tavilyX, tavilyY, tavilyColor, tavilyStatus === "active", state.speculativeSearchCancelled);
+      if (tavilyStatus === "active" || tavilyStatus === "merged") {
+        drawParticleAlongSpline(rootX, rootY, tavilyX, tavilyY, (animPhase + 0.6) % 1, tavilyColor);
+      }
+      drawNode(tavilyX, tavilyY, "Tavily Search API", tavilySubtitle, tavilyStatus);
+
+      // Convergence: Qdrant & Tavily -> CRAG Gate
+      const cragActive = state.cragDecision !== null;
+      let cragColor = "rgba(100, 116, 139, 0.4)";
+      if (state.cragDecision === "CORRECT") cragColor = "#10b981";
+      else if (state.cragDecision === "AMBIGUOUS" || state.cragDecision === "REALTIME_TEMPORAL") cragColor = "#f59e0b";
+      else if (state.cragDecision === "INCORRECT") cragColor = "#f43f5e";
+
+      drawBezierSpline(qdrantX + 60, qdrantY, cragX, cragY, cragColor, cragActive);
+      if (!state.speculativeSearchCancelled && (tavilyStatus === "merged" || state.cragDecision === "INCORRECT")) {
+        drawBezierSpline(tavilyX + 60, tavilyY, cragX, cragY, cragColor, cragActive);
+      }
+      drawNode(
+        cragX, cragY, 
+        "CRAG Decision Gate", 
+        state.cragDecision ? `${state.cragDecision}` : "Arbitrating confidence...",
+        cragActive ? (state.cragDecision === "CORRECT" ? "ok" : "active") : "idle"
+      );
+
+      // CRAG -> Groq LLM
+      const llmActive = state.tokens.length > 0;
+      const llmColor = llmActive ? "#38bdf8" : "rgba(100, 116, 139, 0.35)";
+      drawBezierSpline(cragX + 80, cragY, llmX, llmY, llmColor, llmActive);
+      if (llmActive) {
+        drawParticleAlongSpline(cragX + 80, cragY, llmX, llmY, animPhase, "#38bdf8");
+      }
+      drawNode(
+        llmX, llmY, 
+        "Groq LLM Stream", 
+        state.ttft ? `TTFT: ${state.ttft}ms (${state.tokens.length} tokens)` : "Streaming tokens...",
+        llmActive ? "active" : "idle"
+      );
+
+      // LLM -> TTS Audio Output
+      const ttsActive = state.audioChunksReceived > 0;
+      const ttsColor = ttsActive ? "#10b981" : "rgba(100, 116, 139, 0.35)";
+      drawBezierSpline(llmX + 60, llmY, ttsX, ttsY, ttsColor, ttsActive);
+      if (ttsActive) {
+        drawParticleAlongSpline(llmX + 60, llmY, ttsX, ttsY, (animPhase + 0.4) % 1, "#10b981");
+      }
+      drawNode(
+        ttsX, ttsY, 
+        "TTS Streaming Audio", 
+        state.ttfab ? `TTFAB: ${state.ttfab}ms (${state.audioChunksReceived} chunks)` : "Synthesizing voice...",
+        ttsActive ? "ok" : "idle"
+      );
+    }
+
+    renderThinkingCanvas();
+  </script>
+</body>
+</html>

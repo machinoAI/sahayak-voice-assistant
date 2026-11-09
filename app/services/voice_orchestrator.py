@@ -95,6 +95,24 @@ class VoiceRAGOrchestrator:
             except (WebSocketDisconnect, RuntimeError):
                 pass
 
+    async def _broadcast_step(
+        self,
+        websocket: WebSocket,
+        tracker: TurnTracker,
+        step: str,
+        data: Optional[dict] = None,
+    ) -> None:
+        """Broadcasts real-time pipeline step telemetry to connected client."""
+        elapsed_ms = round((time.perf_counter() - tracker.start_time) * 1000, 2)
+        payload = {
+            "event": "PIPELINE_STEP",
+            "turn_id": tracker.turn_id,
+            "step": step,
+            "elapsed_ms": elapsed_ms,
+            "data": data or {},
+        }
+        await self._send_safe_json(websocket, payload)
+
     def is_speaking(self) -> bool:
         """Returns True if the assistant is currently generating tokens or streaming audio."""
         gen_active = self.active_generation_task is not None and not self.active_generation_task.done()
@@ -152,9 +170,13 @@ class VoiceRAGOrchestrator:
                     async for audio_chunk in self.tts.synthesize_stream(sentence):
                         if not first_audio_packet_sent:
                             first_audio_packet_sent = True
+                            ttfab_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
                             tracker.log_step(
                                 "TTS_FIRST_AUDIO_PACKET",
-                                {"ttfab_ms": round((time.perf_counter() - tracker.start_time) * 1000, 1)},
+                                {"ttfab_ms": ttfab_ms},
+                            )
+                            await self._broadcast_step(
+                                websocket, tracker, "TTS_FIRST_AUDIO_PACKET", {"ttfab_ms": ttfab_ms}
                             )
                         total_audio_bytes += len(audio_chunk)
                         await self._send_safe_bytes(websocket, audio_chunk)
@@ -201,10 +223,32 @@ class VoiceRAGOrchestrator:
                 else final_transcript
             )
 
+            await self._broadcast_step(
+                websocket,
+                tracker,
+                "TURN_INITIATED",
+                {
+                    "transcript": final_transcript,
+                    "augmented_query": search_query,
+                    "augmented": search_query != final_transcript,
+                },
+            )
+
             intent: QueryIntent
+            router_start = time.perf_counter()
             if self.router and settings.SEMANTIC_ROUTER_ENABLED:
                 intent = self.router.classify_intent(search_query)
-                tracker.log_step("ROUTER_CLASSIFY_COMPLETE", {"intent": intent.value, "router": "semantic"})
+                router_latency_ms = round((time.perf_counter() - router_start) * 1000, 2)
+                tracker.log_step(
+                    "ROUTER_CLASSIFY_COMPLETE",
+                    {"intent": intent.value, "router": "semantic", "latency_ms": router_latency_ms},
+                )
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "ROUTER_CLASSIFY_COMPLETE",
+                    {"intent": intent.value, "router": "semantic", "latency_ms": router_latency_ms},
+                )
             else:
                 temporal_keywords = {
                     "today", "latest", "current", "news", "weather",
@@ -215,7 +259,17 @@ class VoiceRAGOrchestrator:
                     intent = QueryIntent.REALTIME_TEMPORAL
                 else:
                     intent = QueryIntent.LOCAL_SCHEME_FAQ
-                tracker.log_step("ROUTER_CLASSIFY_COMPLETE", {"intent": intent.value, "router": "keyword_fallback"})
+                router_latency_ms = round((time.perf_counter() - router_start) * 1000, 2)
+                tracker.log_step(
+                    "ROUTER_CLASSIFY_COMPLETE",
+                    {"intent": intent.value, "router": "keyword_fallback", "latency_ms": router_latency_ms},
+                )
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "ROUTER_CLASSIFY_COMPLETE",
+                    {"intent": intent.value, "router": "keyword_fallback", "latency_ms": router_latency_ms},
+                )
 
             # 2. Speculative Concurrent Web Search Dispatch (for temporal queries)
             search_task: Optional[asyncio.Task] = None
@@ -225,6 +279,12 @@ class VoiceRAGOrchestrator:
                     {"query": search_query, "trigger": "temporal"},
                 )
                 tracker.log_step("SPECULATIVE_SEARCH_DISPATCHED", {"query": search_query})
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "SPECULATIVE_SEARCH_DISPATCHED",
+                    {"query": search_query, "trigger": "temporal"},
+                )
                 search_task = asyncio.create_task(
                     self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
                 )
@@ -238,20 +298,63 @@ class VoiceRAGOrchestrator:
                     "augmented": search_query != final_transcript,
                 },
             )
+            await self._broadcast_step(
+                websocket,
+                tracker,
+                "RAG_RETRIEVAL_START",
+                {"query": search_query, "raw_query": final_transcript},
+            )
+            vdb_start = time.perf_counter()
             docs: List[RetrievedDocument] = await self.vdb.hybrid_search(
                 query=search_query, 
                 top_k=2
             )
+            vdb_latency_ms = round((time.perf_counter() - vdb_start) * 1000, 1)
+            top_score = max([d.score for d in docs], default=0.0)
+
             tracker.log_step(
                 "RAG_RETRIEVAL_COMPLETE",
-                {"docs_retrieved": len(docs), "top_doc_preview": docs[0].text[:40] if docs else "None"},
+                {
+                    "docs_retrieved": len(docs),
+                    "top_score": top_score,
+                    "top_doc_preview": docs[0].text[:40] if docs else "None",
+                    "latency_ms": vdb_latency_ms,
+                },
+            )
+            await self._broadcast_step(
+                websocket,
+                tracker,
+                "RAG_RETRIEVAL_COMPLETE",
+                {
+                    "docs_count": len(docs),
+                    "top_score": round(top_score, 3),
+                    "latency_ms": vdb_latency_ms,
+                    "docs": [
+                        {
+                            "id": d.id,
+                            "score": round(d.score, 3),
+                            "text": d.text[:180] + ("..." if len(d.text) > 180 else ""),
+                        }
+                        for d in docs
+                    ],
+                },
             )
 
             # 4. Corrective RAG (CRAG) Tri-State Evaluation & Concurrency Arbitration
-            top_score = max([d.score for d in docs], default=0.0)
-
             if intent == QueryIntent.REALTIME_TEMPORAL:
-                # Explicit temporal intent: await the speculative search and merge results
+                # Explicit temporal intent: await speculative search and merge results
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "CRAG_DECISION",
+                    {
+                        "decision": "REALTIME_TEMPORAL",
+                        "top_score": round(top_score, 3),
+                        "action": "Temporal intent detected. Speculative Web Search prioritized.",
+                        "high_threshold": settings.CRAG_HIGH_THRESHOLD,
+                        "low_threshold": settings.CRAG_LOW_THRESHOLD,
+                    },
+                )
                 web_docs: List[RetrievedDocument] = []
                 if search_task:
                     try:
@@ -259,6 +362,22 @@ class VoiceRAGOrchestrator:
                     except asyncio.CancelledError:
                         web_docs = []
                     tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
+                    await self._broadcast_step(
+                        websocket,
+                        tracker,
+                        "WEB_SEARCH_COMPLETE",
+                        {
+                            "docs_count": len(web_docs),
+                            "docs": [
+                                {
+                                    "id": d.id,
+                                    "score": round(d.score, 3),
+                                    "text": d.text[:180] + ("..." if len(d.text) > 180 else ""),
+                                }
+                                for d in web_docs
+                            ],
+                        },
+                    )
                 if web_docs:
                     docs = web_docs + docs
             elif top_score >= settings.CRAG_HIGH_THRESHOLD:
@@ -270,13 +389,49 @@ class VoiceRAGOrchestrator:
                         "SPECULATIVE_SEARCH_CANCELLED",
                         {"reason": "high_local_confidence", "score": top_score, "threshold": settings.CRAG_HIGH_THRESHOLD},
                     )
+                    await self._broadcast_step(
+                        websocket,
+                        tracker,
+                        "SPECULATIVE_SEARCH_CANCELLED",
+                        {"reason": "high_local_confidence", "score": round(top_score, 3), "threshold": settings.CRAG_HIGH_THRESHOLD},
+                    )
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "CRAG_DECISION",
+                    {
+                        "decision": "CORRECT",
+                        "top_score": round(top_score, 3),
+                        "action": f"Local confidence ({top_score:.2f}) >= {settings.CRAG_HIGH_THRESHOLD}. Knowledge is authoritative. Web search pruned.",
+                        "high_threshold": settings.CRAG_HIGH_THRESHOLD,
+                        "low_threshold": settings.CRAG_LOW_THRESHOLD,
+                    },
+                )
             elif top_score < settings.CRAG_LOW_THRESHOLD:
                 # INCORRECT (< 0.55): Local knowledge is absent or irrelevant -> Pure Web Search
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "CRAG_DECISION",
+                    {
+                        "decision": "INCORRECT",
+                        "top_score": round(top_score, 3),
+                        "action": f"Local score ({top_score:.2f}) < {settings.CRAG_LOW_THRESHOLD}. Local docs suppressed to avoid hallucination. Executing Web Search.",
+                        "high_threshold": settings.CRAG_HIGH_THRESHOLD,
+                        "low_threshold": settings.CRAG_LOW_THRESHOLD,
+                    },
+                )
                 if not search_task and self.search and settings.WEB_SEARCH_ENABLED:
                     tracker.log_step(
                         "WEB_SEARCH_START",
                         {"query": search_query, "trigger": "crag_low_confidence", "score": top_score},
                     )
+                    await self._broadcast_step(
+                        websocket,
+                        tracker,
+                        "WEB_SEARCH_START",
+                        {"query": search_query, "trigger": "crag_low_confidence", "score": round(top_score, 3)},
+                    )
                     search_task = asyncio.create_task(
                         self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
                     )
@@ -288,15 +443,49 @@ class VoiceRAGOrchestrator:
                     except asyncio.CancelledError:
                         web_docs = []
                     tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
+                    await self._broadcast_step(
+                        websocket,
+                        tracker,
+                        "WEB_SEARCH_COMPLETE",
+                        {
+                            "docs_count": len(web_docs),
+                            "docs": [
+                                {
+                                    "id": d.id,
+                                    "score": round(d.score, 3),
+                                    "text": d.text[:180] + ("..." if len(d.text) > 180 else ""),
+                                }
+                                for d in web_docs
+                            ],
+                        },
+                    )
 
                 if web_docs:
                     docs = web_docs  # Suppress local docs to prevent hallucinations
             else:
                 # AMBIGUOUS (0.55 <= score < 0.82): Hybrid Merge
+                await self._broadcast_step(
+                    websocket,
+                    tracker,
+                    "CRAG_DECISION",
+                    {
+                        "decision": "AMBIGUOUS",
+                        "top_score": round(top_score, 3),
+                        "action": f"Local score ({top_score:.2f}) is ambiguous ({settings.CRAG_LOW_THRESHOLD} <= score < {settings.CRAG_HIGH_THRESHOLD}). Merging local background with live web search.",
+                        "high_threshold": settings.CRAG_HIGH_THRESHOLD,
+                        "low_threshold": settings.CRAG_LOW_THRESHOLD,
+                    },
+                )
                 if not search_task and self.search and settings.WEB_SEARCH_ENABLED:
                     tracker.log_step(
                         "WEB_SEARCH_START",
                         {"query": search_query, "trigger": "crag_ambiguous", "score": top_score},
+                    )
+                    await self._broadcast_step(
+                        websocket,
+                        tracker,
+                        "WEB_SEARCH_START",
+                        {"query": search_query, "trigger": "crag_ambiguous", "score": round(top_score, 3)},
                     )
                     search_task = asyncio.create_task(
                         self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
@@ -309,6 +498,22 @@ class VoiceRAGOrchestrator:
                     except asyncio.CancelledError:
                         web_docs = []
                     tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
+                    await self._broadcast_step(
+                        websocket,
+                        tracker,
+                        "WEB_SEARCH_COMPLETE",
+                        {
+                            "docs_count": len(web_docs),
+                            "docs": [
+                                {
+                                    "id": d.id,
+                                    "score": round(d.score, 3),
+                                    "text": d.text[:180] + ("..." if len(d.text) > 180 else ""),
+                                }
+                                for d in web_docs
+                            ],
+                        },
+                    )
 
                 if web_docs:
                     docs = web_docs + docs
@@ -337,6 +542,9 @@ class VoiceRAGOrchestrator:
 
             # 3. LLM Token Stream -> Sentence Boundary Splitter -> Queue Producer
             tracker.log_step("LLM_STREAM_START", {"model": getattr(self.llm, "model", "default")})
+            await self._broadcast_step(
+                websocket, tracker, "LLM_STREAM_START", {"model": getattr(self.llm, "model", "default")}
+            )
             sentence_buffer = ""
             token_count = 0
             first_token_received = False
@@ -345,14 +553,27 @@ class VoiceRAGOrchestrator:
             async for token in self.llm.stream_tokens(prompt):
                 if not first_token_received:
                     first_token_received = True
+                    ttft_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
                     tracker.log_step(
                         "LLM_FIRST_TOKEN",
-                        {"ttft_ms": round((time.perf_counter() - tracker.start_time) * 1000, 1)},
+                        {"ttft_ms": ttft_ms},
                     )
+                    await self._broadcast_step(websocket, tracker, "LLM_FIRST_TOKEN", {"ttft_ms": ttft_ms})
 
                 token_count += 1
                 collected_tokens.append(token)
                 sentence_buffer += token
+
+                # Broadcast token event to UI
+                await self._send_safe_json(
+                    websocket,
+                    {
+                        "event": "LLM_TOKEN",
+                        "turn_id": turn_id,
+                        "token": token,
+                        "token_count": token_count,
+                    },
+                )
 
                 # Drain all matched sentences from the buffer without slicing corruption
                 while True:
@@ -396,9 +617,21 @@ class VoiceRAGOrchestrator:
                     was_interrupted=False,
                 )
 
+            total_turn_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
             tracker.log_step(
                 "TURN_COMPLETED_SUCCESS",
-                {"total_turn_ms": round((time.perf_counter() - tracker.start_time) * 1000, 1)},
+                {"total_turn_ms": total_turn_ms},
+            )
+            await self._broadcast_step(
+                websocket,
+                tracker,
+                "TURN_COMPLETED_SUCCESS",
+                {
+                    "total_turn_ms": total_turn_ms,
+                    "tokens": token_count,
+                    "sentences": sentence_dispatched,
+                    "response": full_assistant_reply,
+                },
             )
 
         except asyncio.CancelledError:
