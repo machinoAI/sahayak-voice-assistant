@@ -29,3 +29,8 @@ class TTSClientProtocol(Protocol):
     async def synthesize_stream(self, text: str) -> AsyncGenerator[bytes, None]:
         """Streams 16kHz PCM audio bytes for a text sentence or clause."""
         ...
+
+class WebSearchProtocol(Protocol):
+    async def search(self, query: str, max_results: int = 2) -> List[RetrievedDocument]:
+        """Executes live web search and returns retrieved document snippets."""
+        ...

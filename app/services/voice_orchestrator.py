@@ -17,6 +17,7 @@ from app.interfaces.adapters import (
     VectorStoreProtocol,
     LLMClientProtocol,
     TTSClientProtocol,
+    WebSearchProtocol,
     RetrievedDocument,
 )
 from app.core.logger import TurnTracker, logger
@@ -60,11 +61,13 @@ class VoiceRAGOrchestrator:
         vdb: VectorStoreProtocol,
         llm: LLMClientProtocol,
         tts: TTSClientProtocol,
+        search: Optional[WebSearchProtocol] = None,
     ) -> None:
         self.stt = stt
         self.vdb = vdb
         self.llm = llm
         self.tts = tts
+        self.search = search
         self._ws_lock = asyncio.Lock()
         self.active_generation_task: Optional[asyncio.Task] = None
         self.active_tts_task: Optional[asyncio.Task] = None
@@ -208,6 +211,31 @@ class VoiceRAGOrchestrator:
                 "RAG_RETRIEVAL_COMPLETE",
                 {"docs_retrieved": len(docs), "top_doc_preview": docs[0].text[:40] if docs else "None"},
             )
+
+            # 2. External Web Search (Tavily) Integration
+            # Triggered for real-time temporal queries or low local confidence
+            if self.search:
+                temporal_keywords = {
+                    "today", "latest", "current", "news", "weather",
+                    "score", "price", "update", "now", "yesterday", "recent"
+                }
+                words = [w.lower().strip("?,.!") for w in search_query.split()]
+                has_temporal_intent = any(w in temporal_keywords for w in words)
+                low_local_confidence = not docs or all(d.score < 0.7 for d in docs)
+
+                if has_temporal_intent or low_local_confidence:
+                    tracker.log_step(
+                        "WEB_SEARCH_START",
+                        {
+                            "query": search_query,
+                            "trigger": "temporal" if has_temporal_intent else "fallback",
+                        },
+                    )
+                    web_docs = await self.search.search(query=search_query, max_results=2)
+                    tracker.log_step("WEB_SEARCH_COMPLETE", {"docs_retrieved": len(web_docs)})
+                    if web_docs:
+                        docs = web_docs + docs
+
             context_text = "\n".join([doc.text for doc in docs])
 
             # 2. Voice-first system prompt with rolling conversation history

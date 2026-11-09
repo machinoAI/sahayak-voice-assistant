@@ -185,3 +185,59 @@ def test_multi_turn_pipeline_memory_integration():
         assert "Assistant: Sahayak is a voice assistant." in turn2_prompt
 
     asyncio.run(_run())
+
+def test_orchestrator_web_search_trigger_on_temporal_query():
+    """Verify that temporal queries (e.g., 'latest', 'today') trigger external web search."""
+    async def _run():
+        mock_stt = MagicMock()
+        mock_vdb = MagicMock()
+        mock_vdb.hybrid_search = AsyncMock(return_value=[
+            RetrievedDocument(id="local-doc", text="Local knowledge base context.", score=0.85)
+        ])
+        
+        mock_search = MagicMock()
+        mock_search.search = AsyncMock(return_value=[
+            RetrievedDocument(id="web-doc-1", text="Live web search result: India news today.", score=0.98)
+        ])
+
+        recorded_prompts = []
+        async def mock_tokens(prompt):
+            recorded_prompts.append(prompt)
+            yield "Here is the latest update."
+
+        mock_llm = MagicMock()
+        mock_llm.stream_tokens = MagicMock(side_effect=mock_tokens)
+
+        mock_tts = MagicMock()
+        async def mock_tts_stream(text):
+            yield b"\x00" * 640
+        mock_tts.synthesize_stream = MagicMock(side_effect=mock_tts_stream)
+
+        orchestrator = VoiceRAGOrchestrator(
+            stt=mock_stt,
+            vdb=mock_vdb,
+            llm=mock_llm,
+            tts=mock_tts,
+            search=mock_search,
+        )
+        mock_ws = AsyncMock()
+
+        # Execute turn with temporal query
+        tracker = await orchestrator.process_voice_turn(
+            "What is the latest news today?", mock_ws
+        )
+
+        steps = tracker.step_history
+        assert "WEB_SEARCH_START" in steps
+        assert "WEB_SEARCH_COMPLETE" in steps
+
+        # Verify web search was invoked
+        mock_search.search.assert_called_once()
+        search_query_arg = mock_search.search.call_args.kwargs.get("query")
+        assert "latest" in search_query_arg
+
+        # Verify LLM prompt included the web search result
+        assert len(recorded_prompts) == 1
+        assert "Live web search result: India news today." in recorded_prompts[0]
+
+    asyncio.run(_run())

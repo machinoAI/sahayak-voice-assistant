@@ -36,4 +36,10 @@ class Settings(BaseSettings):
     CARTESIA_VOICE_ID: Optional[str] = None
     EDGE_VOICE: str = "en-IN-NeerjaNeural"  # e.g., "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"
 
+    # External Web Search (Tavily)
+    TAVILY_API_KEY: Optional[str] = None
+    WEB_SEARCH_ENABLED: bool = True
+    WEB_SEARCH_MAX_RESULTS: int = 2
+    WEB_SEARCH_TIMEOUT_SECONDS: float = 2.5
+
 settings = Settings()

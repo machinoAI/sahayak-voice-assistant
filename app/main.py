@@ -11,6 +11,7 @@ from app.adapters.tts_cartesia import CartesiaTTSAdapter
 from app.adapters.llm_groq import GroqLLMAdapter
 from app.adapters.vector_store_qdrant import QdrantVectorStoreAdapter
 from app.adapters.stt_deepgram import DeepgramSTTAdapter
+from app.adapters.search_tavily import TavilySearchAdapter
 from app.core.config import settings
 
 def create_app() -> FastAPI:
@@ -38,6 +39,11 @@ def create_app() -> FastAPI:
         collection_name=settings.QDRANT_COLLECTION,
     )
     stt_adapter = DeepgramSTTAdapter(api_key=settings.DEEPGRAM_API_KEY)
+    search_adapter = (
+        TavilySearchAdapter(api_key=settings.TAVILY_API_KEY)
+        if settings.WEB_SEARCH_ENABLED
+        else None
+    )
 
     # Wire into async orchestrator
     orchestrator = VoiceRAGOrchestrator(
@@ -45,6 +51,7 @@ def create_app() -> FastAPI:
         vdb=vdb_adapter,
         llm=llm_adapter,
         tts=tts_adapter,
+        search=search_adapter,
     )
 
     voice_router = get_voice_router(orchestrator)
@@ -59,6 +66,7 @@ def create_app() -> FastAPI:
             "voice": settings.CARTESIA_VOICE_ID if settings.CARTESIA_API_KEY else settings.EDGE_VOICE,
             "llm_model": settings.GROQ_MODEL,
             "vector_db": settings.QDRANT_URL,
+            "web_search_enabled": bool(settings.TAVILY_API_KEY and settings.WEB_SEARCH_ENABLED),
         }
 
     return app
