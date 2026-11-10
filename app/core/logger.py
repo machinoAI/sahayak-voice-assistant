@@ -7,14 +7,27 @@ import time
 import logging
 import json
 import sys
+from pathlib import Path
 from typing import Optional, Dict, Any
 
-# Configure standard root logger
+# Ensure persistent log directory exists
+LOGS_DIR = Path("logs")
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOGS_DIR / "sahayak.log"
+
+# Configure standard root logger with both stdout and file persistence
+file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[stream_handler, file_handler],
 )
 
 logger = logging.getLogger("sahayak")
