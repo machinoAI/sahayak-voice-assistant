@@ -54,18 +54,56 @@ class QdrantVectorStoreAdapter:
             pass
 
         # Default fallback domain knowledge for Sahayak demo/testing
-        return [
-            RetrievedDocument(
-                id="doc-sahayak-core",
-                text="Sahayak is a voice assistant designed for Indian multilingual queries, supporting low-latency voice RAG.",
-                score=0.95,
+        # Standard welfare schemes and Sahayak platform knowledge
+        knowledge_corpus = [
+            (
+                "doc-pm-kisan",
+                "Under the PM Kisan Samman Nidhi scheme, all landholding farmer families with cultivable landholding in their names are eligible for financial benefit of ₹6000 per year, payable in three equal four-monthly installments of ₹2000 each. Institutional landholders, serving or retired government officers, and income tax payers are excluded from eligibility.",
             ),
-            RetrievedDocument(
-                id="doc-sahayak-contact",
-                text="Sahayak operates with streaming Speech-to-Text, Qdrant hybrid knowledge retrieval, and Edge neural speech synthesis.",
-                score=0.88,
-            )
+            (
+                "doc-ayushman-bharat",
+                "Ayushman Bharat Pradhan Mantri Jan Arogya Yojana (AB-PMJAY) provides health coverage of up to ₹5 lakh per family per year for secondary and tertiary care hospitalization to over 12 crore poor and vulnerable families across India.",
+            ),
+            (
+                "doc-fertilizer-subsidy",
+                "The Indian government provides fertilizer subsidies on urea and nutrient-based fertilizers (DAP, MOP, NPK) directly through manufacturers so farmers receive fertilizers at subsidized statutory prices.",
+            ),
+            (
+                "doc-sahayak-core",
+                "Sahayak is a voice assistant designed for Indian multilingual queries, supporting low-latency voice RAG.",
+            ),
+            (
+                "doc-sahayak-contact",
+                "Sahayak operates with streaming Speech-to-Text, Qdrant hybrid knowledge retrieval, and Edge neural speech synthesis.",
+            ),
         ]
+
+        import re
+        query_tokens = set(re.findall(r"\w+", query.lower()))
+        stopwords = {
+            "what", "is", "the", "for", "a", "an", "and", "in", "to", "of",
+            "how", "can", "i", "do", "does", "did", "tell", "me", "about"
+        }
+        meaningful = query_tokens - stopwords
+
+        scored_docs = []
+        for doc_id, text in knowledge_corpus:
+            doc_tokens = set(re.findall(r"\w+", text.lower())) - stopwords
+            overlap = len(meaningful & doc_tokens)
+
+            if "sahayak" in meaningful and "sahayak" in doc_tokens:
+                s = 0.95
+            elif overlap >= 2:
+                s = round(min(0.95, 0.78 + (overlap * 0.05)), 2)
+            elif overlap == 1:
+                s = 0.65
+            else:
+                s = 0.30
+
+            scored_docs.append(RetrievedDocument(id=doc_id, text=text, score=s))
+
+        scored_docs.sort(key=lambda d: d.score, reverse=True)
+        return scored_docs[:top_k]
 
     async def add_documents(self, docs: List[RetrievedDocument], vectors: List[List[float]]):
         """Indexes new document chunks into Qdrant."""
