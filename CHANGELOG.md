@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] - 2026-11-12
+
+### Added
+- **Local Dense Neural Embeddings with FastEmbed** (`app/adapters/vector_store_qdrant.py`):
+  - Integrated `fastembed` with `BAAI/bge-small-en-v1.5` generating 384-dimensional dense semantic vectors in $<6\text{ms}$ on CPU with zero network dependencies.
+  - Implemented true cosine vector search via Qdrant's `query_points` API over local disk storage (`qdrant_storage/`).
+  - Added thread-safe singleton embedder caching to prevent duplicate model initializations.
+- **Enhanced Document Ingestion Pipeline** (`app/rag/ingest.py`):
+  - Voice-optimized semantic chunking (150-250 tokens) with paragraph preservation and header grounding.
+  - CLI and programmatic ingestion supporting files (`.md`, `.txt`) and recursive directory traversal.
+  - Automatically indexed internal architecture documentation (`docs/` and `README.md`) into `sahayak_kb`.
+- **Visual Speculative Trajectory Fan Canvas** (`app/static/index.html`):
+  - Interactive next-token branching tree visualizer rendered via HTML5 Canvas.
+  - Dynamic committed path (`◯`) and pruned route (`⨂`) badges.
+  - Dual view switcher between Speculative Trajectory Fan and Pipeline Architecture DAG.
+
+### Removed
+- **Hardcoded Citizen Welfare Scheme Fallback**:
+  - Purged hardcoded PM Kisan, Ayushman Bharat, and fertilizer subsidy text from `vector_store_qdrant.py`, replacing it with a clean, domain-neutral platform knowledge base.
+
+---
+
 ## [0.4.0] - 2026-11-10
 
 ### Added

@@ -25,10 +25,13 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.0-flash"
 
-    # Vector DB (Qdrant)
-    QDRANT_URL: str = ":memory:"  # In-memory by default for zero-friction local testing
+    # Vector DB (Qdrant) & Embeddings
+    QDRANT_URL: Optional[str] = None  # None defaults to local disk path (qdrant_storage) or :memory:
+    QDRANT_PATH: Optional[str] = "qdrant_storage"
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION: str = "sahayak_kb"
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIM: int = 384
 
     # TTS Provider
     TTS_PROVIDER: str = "edge"  # "edge" (free) or "cartesia"

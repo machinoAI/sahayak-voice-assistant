@@ -29,6 +29,25 @@ def test_qdrant_adapter_fallback():
 
     asyncio.run(_run())
 
+def test_qdrant_dense_embedding_search():
+    """Verify FastEmbed generates dense embeddings and Qdrant retrieves semantic matches."""
+    from app.interfaces.adapters import RetrievedDocument
+
+    async def _run():
+        adapter = QdrantVectorStoreAdapter(url=":memory:", collection_name="test_dense_coll")
+        docs = [
+            RetrievedDocument(id="doc-1", text="Voice assistants require ultra-low latency audio streaming.", score=1.0),
+            RetrievedDocument(id="doc-2", text="Quantum computing uses qubits and superposition.", score=1.0),
+        ]
+        await adapter.add_documents(docs)
+
+        matches = await adapter.hybrid_search("How fast is the voice audio stream?", top_k=1)
+        assert len(matches) == 1
+        assert "audio streaming" in matches[0].text
+        assert matches[0].score > 0.60
+
+    asyncio.run(_run())
+
 def test_groq_mock_fallback():
     """Verify Groq adapter yields fallback tokens gracefully when API key is missing."""
     async def _run():
