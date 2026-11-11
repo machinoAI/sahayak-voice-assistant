@@ -173,19 +173,67 @@
       display: block;
     }
 
-    .canvas-overlay-legend {
+    .canvas-toolbar {
       position: absolute;
       top: 14px;
       left: 16px;
+      right: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .canvas-view-switcher {
+      display: flex;
+      gap: 6px;
+      background: rgba(10, 15, 25, 0.88);
+      padding: 4px;
+      border-radius: 9px;
+      border: 1px solid var(--border-subtle);
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
+    }
+
+    .view-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 16px;
-      background: rgba(10, 15, 25, 0.85);
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .view-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .view-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--cyan-glow);
+      border-color: rgba(56, 189, 248, 0.4);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+    }
+
+    .canvas-overlay-legend {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: rgba(10, 15, 25, 0.88);
       padding: 6px 14px;
-      border-radius: 8px;
+      border-radius: 9px;
       border: 1px solid var(--border-subtle);
       font-size: 11px;
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(12px);
+      pointer-events: auto;
     }
 
     .legend-item {
@@ -195,30 +243,31 @@
       color: var(--text-muted);
     }
 
-    .legend-indicator {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
+    .legend-badge {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 8px;
       font-weight: 700;
+      width: 14px;
+      height: 14px;
     }
 
-    .legend-active {
-      background: var(--cyan-glow);
-      box-shadow: 0 0 6px var(--cyan-glow);
+    .legend-badge.committed {
+      color: var(--cyan-glow);
+      font-size: 15px;
+      text-shadow: 0 0 8px var(--cyan-glow);
     }
 
-    .legend-pruned {
-      border: 1.5px solid var(--rose-accent);
+    .legend-badge.pruned {
       color: var(--rose-accent);
+      font-size: 13px;
+      font-weight: 900;
     }
 
-    .legend-merged {
-      background: var(--indigo-accent);
-      box-shadow: 0 0 6px var(--indigo-accent);
+    .legend-badge.speculative {
+      color: var(--cyan-glow);
+      font-size: 14px;
+      font-weight: bold;
     }
 
     /* Controls & Query Input Section */
@@ -717,16 +766,41 @@
   <div class="app-container">
 
     <!-- Top Canvas: Neural Branching Decision Tree -->
+    <!-- Top Canvas: Visual Speculative Trajectory Fan & Neural Decision Tree -->
     <div class="canvas-section">
-      <div class="canvas-overlay-legend">
-        <div class="legend-item">
-          <span class="legend-indicator legend-active"></span> Active Branch
+      <div class="canvas-toolbar">
+        <div class="canvas-view-switcher">
+          <button class="view-btn active" id="btnViewFan" onclick="switchCanvasView('fan')" title="Visual Speculative Branching Fan (Inspired by next-token tree)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 3v12"/>
+              <circle cx="18" cy="6" r="3"/>
+              <circle cx="18" cy="18" r="3"/>
+              <path d="M6 9a9 9 0 0 1 9-9"/>
+              <path d="M6 15a9 9 0 0 0 9 9"/>
+            </svg>
+            Speculative Trajectory Fan
+          </button>
+          <button class="view-btn" id="btnViewDag" onclick="switchCanvasView('dag')" title="Pipeline Architecture Stage Flow">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+              <path d="M10 6.5h4M17.5 10v4"/>
+            </svg>
+            Pipeline DAG
+          </button>
         </div>
-        <div class="legend-item">
-          <span class="legend-indicator legend-pruned">✕</span> CRAG Pruned
-        </div>
-        <div class="legend-item">
-          <span class="legend-indicator legend-merged"></span> Speculative/Merged
+
+        <div class="canvas-overlay-legend">
+          <div class="legend-item">
+            <span class="legend-badge committed">◯</span> Committed Path
+          </div>
+          <div class="legend-item">
+            <span class="legend-badge pruned">⨂</span> Pruned Route
+          </div>
+          <div class="legend-item">
+            <span class="legend-badge speculative">—</span> Speculative Draft
+          </div>
         </div>
       </div>
       <canvas id="decisionCanvas"></canvas>
@@ -736,6 +810,9 @@
     <div class="controls-card">
       <div class="presets-row">
         <span class="preset-label">Test Scenarios:</span>
+        <button class="preset-btn" onclick="runPreset('to_lead')">
+          <span>✨</span> To lead, (Speculative Continuation)
+        </button>
         <button class="preset-btn" onclick="runPreset('pm_kisan')">
           <span>🌾</span> PM Kisan (Local Scheme / High Conf)
         </button>
@@ -944,6 +1021,8 @@
       isConnected: false,
       turnId: null,
       queryText: "",
+      interimText: "",
+      canvasView: "fan",
       routerIntent: null,
       routerLatency: 0,
       vdbScore: null,
@@ -1020,10 +1099,12 @@
 
       if (eventType === "INTERIM_TRANSCRIPT") {
         document.getElementById("interimTranscript").innerText = msg.text;
+        state.interimText = msg.text;
       } else if (eventType === "FINAL_TRANSCRIPT") {
         document.getElementById("interimTranscript").innerText = "";
         document.getElementById("finalTranscript").innerText = msg.text;
         state.queryText = msg.text;
+        state.interimText = "";
         resetTurnState(msg.text);
       } else if (eventType === "PIPELINE_STEP") {
         handlePipelineStep(msg.step, msg.data, msg.elapsed_ms);
@@ -1039,6 +1120,7 @@
 
     function resetTurnState(query) {
       state.queryText = query;
+      state.interimText = "";
       state.routerIntent = null;
       state.routerLatency = 0;
       state.vdbScore = null;
@@ -1198,6 +1280,7 @@
        3. INTERACTIVE CONTROLS & TEST PRESETS
        ========================================================================= */
     const PRESETS = {
+      to_lead: "To lead, one must first learn to listen. How does this principle apply to voice AI?",
       pm_kisan: "What is the eligibility criteria for PM Kisan scheme?",
       temporal_news: "What is the latest news and weather update today?",
       fertilizer_subsidy: "Did the government change the fertilizer subsidy rules?",
@@ -1449,7 +1532,7 @@
     renderAudioVisualizer();
 
     /* =========================================================================
-       6. THE THINKING CANVAS: NEURAL DECISION TREE & SPLINE VISUALIZER
+       6. THE THINKING CANVAS: SPECULATIVE TRAJECTORY FAN & PIPELINE DAG
        ========================================================================= */
     const decisionCanvas = document.getElementById("decisionCanvas");
     const ctx = decisionCanvas.getContext("2d");
@@ -1465,6 +1548,14 @@
     }
     window.addEventListener("resize", resizeDecisionCanvas);
     setTimeout(resizeDecisionCanvas, 50);
+
+    function switchCanvasView(view) {
+      state.canvasView = view;
+      const btnFan = document.getElementById("btnViewFan");
+      const btnDag = document.getElementById("btnViewDag");
+      if (btnFan) btnFan.className = "view-btn " + (view === "fan" ? "active" : "");
+      if (btnDag) btnDag.className = "view-btn " + (view === "dag" ? "active" : "");
+    }
 
     function drawDotGrid(w, h) {
       const spacing = 36;
@@ -1521,9 +1612,7 @@
     }
 
     function drawNode(x, y, title, subtitle, status) {
-      // status: 'idle', 'active', 'ok', 'pruned', 'merged'
       ctx.save();
-
       let circleColor = "#64748b";
       let ringColor = "rgba(100, 116, 139, 0.4)";
       let textColor = "#94a3b8";
@@ -1546,7 +1635,6 @@
         textColor = "#ffffff";
       }
 
-      // Terminal Node Ring
       ctx.strokeStyle = ringColor;
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -1554,7 +1642,6 @@
       ctx.stroke();
 
       if (status === "pruned") {
-        // Draw cross marker inside circle (X) as in reference image!
         ctx.strokeStyle = circleColor;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -1564,7 +1651,6 @@
         ctx.lineTo(x - 3.5, y + 3.5);
         ctx.stroke();
       } else {
-        // Center dot
         ctx.fillStyle = circleColor;
         if (status === "active" || status === "ok" || status === "merged") {
           ctx.shadowColor = circleColor;
@@ -1576,7 +1662,6 @@
         ctx.shadowBlur = 0;
       }
 
-      // Title & Subtitle Labels
       ctx.font = "bold 12px " + getComputedStyle(document.body).fontFamily;
       ctx.fillStyle = textColor;
       ctx.textAlign = "left";
@@ -1587,22 +1672,324 @@
         ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
         ctx.fillText(subtitle, x + 16, y + 13);
       }
-
       ctx.restore();
     }
 
-    function renderThinkingCanvas() {
-      requestAnimationFrame(renderThinkingCanvas);
-      const rect = decisionCanvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
+    /* -------------------------------------------------------------------------
+       VIEW 1: SPECULATIVE TRAJECTORY FAN (Inspired by Next-Token Branching Graphic)
+       ------------------------------------------------------------------------- */
+    function drawSpeculativeTrajectoryFan(w, h) {
+      const rootX = Math.max(160, Math.min(240, w * 0.20));
+      const rootY = h * 0.52;
+      const trunkStartX = Math.max(20, rootX - 160);
 
-      ctx.clearRect(0, 0, w, h);
-      drawDotGrid(w, h);
+      // 1. Text Prefix on Canvas (e.g. "To lead," or live interim/final spoken tokens)
+      ctx.save();
+      const prefixText = state.interimText 
+        ? state.interimText 
+        : (state.queryText ? state.queryText : "To lead,");
+      
+      const truncatedPrefix = prefixText.length > 28 ? prefixText.slice(0, 26) + "..." : prefixText;
+      
+      ctx.font = "500 16px " + getComputedStyle(document.body).fontFamily;
+      ctx.fillStyle = (state.interimText || state.queryText) ? "#ffffff" : "rgba(226, 232, 240, 0.9)";
+      ctx.textAlign = "right";
+      if (state.interimText || state.queryText) {
+        ctx.shadowColor = "#38bdf8";
+        ctx.shadowBlur = 8;
+      }
+      ctx.fillText(truncatedPrefix, rootX - 18, rootY - 14);
+      ctx.restore();
 
-      animPhase = (animPhase + 0.012) % 1;
+      // 2. Trunk Baseline entering horizontally into the bifurcation root
+      ctx.save();
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 2.4;
+      ctx.shadowColor = "#38bdf8";
+      ctx.shadowBlur = 8;
+      
+      ctx.beginPath();
+      ctx.moveTo(trunkStartX, rootY);
+      
+      if (state.isRecording && state.analyser) {
+        const midX = (trunkStartX + rootX) / 2;
+        const waveAmp = Math.sin(animPhase * Math.PI * 4) * 4;
+        ctx.quadraticCurveTo(midX, rootY + waveAmp, rootX, rootY);
+      } else {
+        ctx.lineTo(rootX, rootY);
+      }
+      ctx.stroke();
 
-      // Coordinate Layout
+      // Bifurcation Root Dot
+      ctx.fillStyle = "#38bdf8";
+      ctx.beginPath();
+      ctx.arc(rootX, rootY, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      const pulseR = 4 + (Math.sin(animPhase * Math.PI * 2) + 1) * 2;
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(rootX, rootY, pulseR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // 3. Define 10 Trajectories matching the user's reference diagram
+      const trajectories = [
+        // 4 Upper Arcs
+        { id: "alt_up_4", dy: -0.42, dx: 0.90, type: "ambient", label: "Draft: Academic Synthesis" },
+        { id: "alt_up_3", dy: -0.32, dx: 0.86, type: "ambient", label: "Draft: Historical Precedent" },
+        { id: "alt_up_2", dy: -0.22, dx: 0.88, type: "ambient", label: "Draft: Regulatory Norms" },
+        { id: "alt_up_1", dy: -0.13, dx: 0.82, type: "ambient_dot", label: "Draft: Conversational Expansion" },
+
+        // 3 Primary Architecture Trajectories (driven by live backend routing & CRAG)
+        { id: "tavily_search", dy: -0.04, dx: 0.94, type: "tavily", label: "Tavily Web Search API" },
+        { id: "qdrant_rag", dy: 0.05, dx: 0.88, type: "qdrant", label: "Qdrant Vector Hybrid RAG" },
+        { id: "direct_llm", dy: 0.12, dx: 0.84, type: "llm", label: "Direct Parametric LLM (Groq)" },
+
+        // 3 Lower Arcs
+        { id: "alt_dn_1", dy: 0.20, dx: 0.76, type: "ambient", label: "Draft: Multilingual Hindi" },
+        { id: "alt_dn_2", dy: 0.30, dx: 0.80, type: "ambient", label: "Draft: Structured Summary" },
+        { id: "alt_dn_3", dy: 0.40, dx: 0.78, type: "ambient", label: "Draft: Follow-up Exploration" },
+      ];
+
+      // Operational status deduction
+      // A. Qdrant RAG Status
+      let qdrantStatus = "speculative";
+      let qdrantSubtitle = "Vector similarity candidate";
+      if (state.cragDecision === "CORRECT" || (state.vdbScore !== null && state.vdbScore >= 0.70 && !state.webSearchComplete)) {
+        qdrantStatus = "committed";
+        qdrantSubtitle = `Committed Grounding (Score: ${state.vdbScore ? state.vdbScore.toFixed(2) : '0.95'})`;
+      } else if (state.cragDecision === "INCORRECT" || state.routerIntent === "TEMPORAL_WEB" || state.routerIntent === "GREETING") {
+        qdrantStatus = "pruned";
+        qdrantSubtitle = state.routerIntent === "GREETING" ? "Pruned: Greeting bypass" : "Pruned: Low similarity score (< 0.55)";
+      } else if (state.vdbScore !== null) {
+        qdrantStatus = "active";
+        qdrantSubtitle = `Retrieving candidates (Score: ${state.vdbScore.toFixed(2)})`;
+      }
+
+      // B. Tavily Web Search Status
+      let tavilyStatus = "speculative";
+      let tavilySubtitle = "Speculative web lookup in-flight";
+      if (state.speculativeSearchCancelled || (state.cragDecision === "CORRECT" && !state.webSearchComplete)) {
+        tavilyStatus = "pruned";
+        tavilySubtitle = "Pruned: Confident local match (Saved API call)";
+      } else if (state.cragDecision === "INCORRECT" || state.routerIntent === "TEMPORAL_WEB" || state.webSearchComplete) {
+        tavilyStatus = "committed";
+        tavilySubtitle = `Committed Web Grounding (${state.webDocs.length || 2} snippets)`;
+      } else if (state.speculativeSearchDispatched) {
+        tavilyStatus = "active";
+        tavilySubtitle = "Speculative query in-flight...";
+      } else if (state.routerIntent === "GREETING") {
+        tavilyStatus = "pruned";
+        tavilySubtitle = "Pruned: Greeting bypass";
+      }
+
+      // C. Direct LLM / Greeting Status
+      let llmStatus = "speculative";
+      let llmSubtitle = "Parametric generation";
+      if (state.routerIntent === "GREETING" || state.routerIntent === "DIRECT_LLM") {
+        llmStatus = "committed";
+        llmSubtitle = `Committed: Direct ${state.routerIntent}`;
+      } else if (state.tokens.length > 0) {
+        llmStatus = "active";
+        llmSubtitle = `Streaming: ${state.tokens.length} tokens (TTFT: ${state.ttft || '--'}ms)`;
+      }
+
+      // 4. Render all 10 trajectory splines
+      const maxSpanX = w - rootX - 190;
+
+      trajectories.forEach((traj, idx) => {
+        const targetX = rootX + Math.max(210, maxSpanX * traj.dx);
+        const targetY = rootY + (h * traj.dy);
+
+        let branchStatus = "ambient";
+        let branchSubtitle = "";
+        if (traj.type === "qdrant") {
+          branchStatus = qdrantStatus;
+          branchSubtitle = qdrantSubtitle;
+        } else if (traj.type === "tavily") {
+          branchStatus = tavilyStatus;
+          branchSubtitle = tavilySubtitle;
+        } else if (traj.type === "llm") {
+          branchStatus = llmStatus;
+          branchSubtitle = llmSubtitle;
+        }
+
+        // Cubic Bezier with horizontal launch tangent (matching reference image)
+        ctx.save();
+        const dx = targetX - rootX;
+        const cx1 = rootX + dx * 0.38;
+        const cy1 = rootY;
+        const cx2 = targetX - dx * 0.35;
+        const cy2 = targetY;
+
+        let strokeColor = "rgba(56, 189, 248, 0.30)";
+        let strokeWidth = 1.5;
+        let isDashed = false;
+        let hasGlow = false;
+
+        if (branchStatus === "committed") {
+          strokeColor = "#38bdf8";
+          strokeWidth = 3.2;
+          hasGlow = true;
+        } else if (branchStatus === "pruned") {
+          strokeColor = "rgba(244, 63, 94, 0.65)";
+          strokeWidth = 1.6;
+          isDashed = true;
+        } else if (branchStatus === "active") {
+          strokeColor = "#38bdf8";
+          strokeWidth = 2.2;
+          hasGlow = true;
+        } else if (branchStatus === "ambient") {
+          strokeColor = "rgba(56, 189, 248, 0.25)";
+          strokeWidth = 1.4;
+        }
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = strokeWidth;
+        if (hasGlow) {
+          ctx.shadowColor = strokeColor;
+          ctx.shadowBlur = 12;
+        }
+        if (isDashed) {
+          ctx.setLineDash([4, 4]);
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(rootX, rootY);
+        ctx.bezierCurveTo(cx1, cy1, cx2, cy2, targetX, targetY);
+        ctx.stroke();
+        ctx.restore();
+
+        // Particle stream along active, committed, or ambient lines
+        if (branchStatus === "active" || branchStatus === "committed" || (branchStatus === "ambient" && idx % 2 === 0)) {
+          const t = (animPhase + (idx * 0.11)) % 1;
+          const u = 1 - t;
+          const px = u * u * u * rootX + 3 * u * u * t * cx1 + 3 * u * t * t * cx2 + t * t * t * targetX;
+          const py = u * u * u * rootY + 3 * u * u * t * cy1 + 3 * u * t * t * cy2 + t * t * t * targetY;
+
+          ctx.save();
+          ctx.fillStyle = branchStatus === "committed" ? "#ffffff" : strokeColor;
+          ctx.shadowColor = strokeColor;
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.arc(px, py, branchStatus === "committed" ? 3.8 : 2.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Endpoint Badges
+        if (branchStatus === "committed") {
+          // ◯ COMMITTED TARGET NODE (Matches open circle ◯ on reference image!)
+          drawCommittedNode(targetX, targetY, traj.label, branchSubtitle);
+        } else if (branchStatus === "pruned") {
+          // ⨂ PRUNED NODE (Matches crossed circle ⨂ on reference image!)
+          drawPrunedNode(targetX, targetY, traj.label, branchSubtitle);
+        } else if (traj.type === "ambient_dot") {
+          // Small dot endpoint (Matches 4th arc dot on reference image)
+          ctx.save();
+          ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+          ctx.shadowColor = "#38bdf8";
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.arc(targetX, targetY, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else if (branchStatus === "active") {
+          ctx.save();
+          ctx.fillStyle = "#38bdf8";
+          ctx.shadowColor = "#38bdf8";
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(targetX, targetY, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      });
+    }
+
+    function drawCommittedNode(x, y, title, subtitle) {
+      ctx.save();
+      // Outer Pulsing Aura Ring
+      const pulse = Math.sin(animPhase * Math.PI * 2) * 2;
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, 13 + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Outer Circle
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 2.2;
+      ctx.shadowColor = "#38bdf8";
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Open Center with core dot (◯)
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Labels
+      ctx.font = "bold 12px " + getComputedStyle(document.body).fontFamily;
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "left";
+      ctx.shadowColor = "#38bdf8";
+      ctx.shadowBlur = 6;
+      ctx.fillText(title, x + 18, y - 2);
+
+      if (subtitle) {
+        ctx.font = "10px " + getComputedStyle(document.body).getPropertyValue("--font-mono");
+        ctx.fillStyle = "var(--cyan-glow)";
+        ctx.shadowBlur = 0;
+        ctx.fillText(subtitle, x + 18, y + 13);
+      }
+      ctx.restore();
+    }
+
+    function drawPrunedNode(x, y, title, subtitle) {
+      ctx.save();
+      // Outer Circle badge
+      ctx.strokeStyle = "#f43f5e";
+      ctx.lineWidth = 1.8;
+      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Cross marker 'X' inside (⨂)
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x - 3, y - 3);
+      ctx.lineTo(x + 3, y + 3);
+      ctx.moveTo(x + 3, y - 3);
+      ctx.lineTo(x - 3, y + 3);
+      ctx.stroke();
+
+      // Labels
+      ctx.font = "bold 12px " + getComputedStyle(document.body).fontFamily;
+      ctx.fillStyle = "#f87171";
+      ctx.textAlign = "left";
+      ctx.fillText(title, x + 18, y - 2);
+
+      if (subtitle) {
+        ctx.font = "10px " + getComputedStyle(document.body).getPropertyValue("--font-mono");
+        ctx.fillStyle = "rgba(244, 63, 94, 0.85)";
+        ctx.fillText(subtitle, x + 18, y + 13);
+      }
+      ctx.restore();
+    }
+
+    /* -------------------------------------------------------------------------
+       VIEW 2: PIPELINE ARCHITECTURE DAG (Multi-Stage Node Flow)
+       ------------------------------------------------------------------------- */
+    function drawPipelineArchitectureDag(w, h) {
       const rootX = 60;
       const rootY = h * 0.5;
 
@@ -1739,6 +2126,27 @@
         state.ttfab ? `TTFAB: ${state.ttfab}ms (${state.audioChunksReceived} chunks)` : "Synthesizing voice...",
         ttsActive ? "ok" : "idle"
       );
+    }
+
+    /* -------------------------------------------------------------------------
+       MAIN CANVAS TICK
+       ------------------------------------------------------------------------- */
+    function renderThinkingCanvas() {
+      requestAnimationFrame(renderThinkingCanvas);
+      const rect = decisionCanvas.getBoundingClientRect();
+      const w = rect.width;
+      const h = rect.height;
+
+      ctx.clearRect(0, 0, w, h);
+      drawDotGrid(w, h);
+
+      animPhase = (animPhase + 0.012) % 1;
+
+      if (state.canvasView === "fan") {
+        drawSpeculativeTrajectoryFan(w, h);
+      } else {
+        drawPipelineArchitectureDag(w, h);
+      }
     }
 
     renderThinkingCanvas();
