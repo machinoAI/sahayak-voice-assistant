@@ -1013,6 +1013,11 @@
   </div>
 
   <script>
+    // Automatically normalize 0.0.0.0 to localhost so browsers treat it as a Secure Context (allowing microphone access)
+    if (window.location.hostname === "0.0.0.0") {
+      window.location.replace(window.location.href.replace("//0.0.0.0:", "//localhost:"));
+    }
+
     /* =========================================================================
        1. GLOBAL STATE & WEBSOCKET CLIENT
        ========================================================================= */
@@ -1330,6 +1335,25 @@
     /* =========================================================================
        4. AUDIO RECORDING & STREAMING (WEB AUDIO API)
        ========================================================================= */
+    function getMediaDevices() {
+      if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function") {
+        return navigator.mediaDevices;
+      }
+      const legacyGetUserMedia = navigator.getUserMedia ||
+        navigator.webkitGetUserMedia ||
+        navigator.mozGetUserMedia ||
+        navigator.msGetUserMedia;
+
+      if (legacyGetUserMedia) {
+        return {
+          getUserMedia: (constraints) => new Promise((resolve, reject) => {
+            legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+          })
+        };
+      }
+      return null;
+    }
+
     async function initAudioContext() {
       if (!state.audioCtx) {
         state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -1351,8 +1375,33 @@
 
     async function startMicrophone() {
       try {
+        const isLocal = window.location.hostname === "localhost" ||
+                        window.location.hostname === "127.0.0.1" ||
+                        window.location.hostname === "::1";
+
+        if (window.isSecureContext === false && !isLocal) {
+          const targetPort = window.location.port ? `:${window.location.port}` : "";
+          const targetUrl = `http://localhost${targetPort}${window.location.pathname}`;
+          alert(
+            "Microphone access requires a Secure Context (HTTPS or localhost).\n\n" +
+            `Please open the application using localhost instead:\n${targetUrl}\n\n` +
+            "Your browser restricts media devices when accessed via insecure hostnames or raw IP addresses."
+          );
+          return;
+        }
+
+        const mediaDevices = getMediaDevices();
+        if (!mediaDevices || typeof mediaDevices.getUserMedia !== "function") {
+          const targetPort = window.location.port ? `:${window.location.port}` : "";
+          alert(
+            "Microphone API is not supported or accessible in this browser context.\n\n" +
+            `Ensure you are visiting via http://localhost${targetPort} or HTTPS, and that microphone permissions are not disabled.`
+          );
+          return;
+        }
+
         await initAudioContext();
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
             sampleRate: 16000,
@@ -1365,7 +1414,7 @@
         state.micMediaStream = stream;
         state.isRecording = true;
         const micBtn = document.getElementById("micBtn");
-        micBtn.classList.add("recording");
+        if (micBtn) micBtn.classList.add("recording");
         document.getElementById("finalTranscript").innerText = "Listening to microphone...";
 
         const source = state.audioCtx.createMediaStreamSource(stream);
@@ -1395,15 +1444,27 @@
 
       } catch (err) {
         console.error("Microphone access error:", err);
-        alert("Could not access microphone: " + err.message);
         stopMicrophone();
+
+        if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+          alert("Microphone permission was denied. Please allow microphone access in your browser site permissions and try again.");
+        } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+          alert("No microphone input device was found. Please plug in or enable an audio input device and try again.");
+        } else {
+          alert("Could not access microphone: " + (err.message || err.name || "Unknown error"));
+        }
       }
     }
 
     function stopMicrophone() {
       state.isRecording = false;
       const micBtn = document.getElementById("micBtn");
-      micBtn.classList.remove("recording");
+      if (micBtn) micBtn.classList.remove("recording");
+
+      const transcriptElem = document.getElementById("finalTranscript");
+      if (transcriptElem && transcriptElem.innerText === "Listening to microphone...") {
+        transcriptElem.innerText = "";
+      }
 
       if (state.micProcessor) {
         state.micProcessor.disconnect();
