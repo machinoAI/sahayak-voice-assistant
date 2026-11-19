@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     DEEPGRAM_LANGUAGE_MODELS: dict[str, str] = {
         "en": "language=en-IN&model=nova-2",
         "hi": "language=hi&model=nova-2",
-        "auto": "detect_language=true&model=nova-2",
+        "auto": "language=multi&model=nova-2",
     }
     SARVAM_API_KEY: Optional[str] = None
 

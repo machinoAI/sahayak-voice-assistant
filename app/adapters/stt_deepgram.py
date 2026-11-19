@@ -76,7 +76,7 @@ class DeepgramStreamSession:
         """Connects to the Deepgram streaming WebSocket endpoint."""
         lang_str = (self.language or "en-IN").strip().lower()
         if lang_str in ("auto", "multi"):
-            lang_param = "detect_language=true"
+            lang_param = "language=multi"
         elif lang_str in ("en", "en-in"):
             lang_param = "language=en-IN"
         elif lang_str == "en-us":

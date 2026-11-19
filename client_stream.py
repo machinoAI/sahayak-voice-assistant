@@ -10,6 +10,9 @@ import asyncio
 import io
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import time
 import wave
@@ -33,6 +36,45 @@ CHUNK_SAMPLES = (SAMPLE_RATE * FRAME_DURATION_MS) // 1000  # 320 samples
 CHUNK_BYTES = CHUNK_SAMPLES * BYTES_PER_SAMPLE            # 640 bytes
 
 
+def is_mp3_data(data: bytes) -> bool:
+    """Detects whether raw byte stream starts with MP3 ID3 header or sync word."""
+    return (len(data) > 3 and data[:3] == b"ID3") or (
+        len(data) > 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0
+    )
+
+
+def convert_mp3_to_pcm16k(mp3_bytes: bytes) -> bytes:
+    """Converts MP3 audio bytes to 16kHz mono linear16 PCM using ffmpeg if available."""
+    if shutil.which("ffmpeg"):
+        try:
+            proc = subprocess.Popen(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    "pipe:0",
+                    "-f",
+                    "s16le",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "pipe:1",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            out, _ = proc.communicate(input=mp3_bytes, timeout=10)
+            if proc.returncode == 0 and out:
+                return out
+        except Exception as e:
+            print(f"[CLIENT] ffmpeg conversion warning: {e}", file=sys.stderr)
+    return mp3_bytes
+
+
 class AudioPlaybackEngine:
     """Non-blocking audio playback buffer using sounddevice."""
 
@@ -50,6 +92,8 @@ class AudioPlaybackEngine:
     async def enqueue(self, pcm_chunk: bytes) -> None:
         self.recorded_pcm.append(pcm_chunk)
         if AUDIO_DEVICE_AVAILABLE:
+            if is_mp3_data(pcm_chunk):
+                pcm_chunk = convert_mp3_to_pcm16k(pcm_chunk)
             await self.queue.put(pcm_chunk)
 
     def clear(self) -> None:
@@ -94,6 +138,8 @@ class AudioPlaybackEngine:
         if not self.recorded_pcm:
             return
         pcm_bytes = b"".join(self.recorded_pcm)
+        if is_mp3_data(pcm_bytes):
+            pcm_bytes = convert_mp3_to_pcm16k(pcm_bytes)
         with wave.open(file_path, "wb") as wf:
             wf.setnchannels(CHANNELS)
             wf.setsampwidth(BYTES_PER_SAMPLE)
@@ -182,6 +228,10 @@ class VoiceClientBenchmark:
                     elif event_type == "CLEAR_AUDIO_BUFFER":
                         self.playback.clear()
 
+                    elif event_type == "LANGUAGE_CHANGED":
+                        new_lang = event.get("language")
+                        print(f"\n[SERVER] Session language switched to: {new_lang}")
+
                 elif isinstance(message, bytes):
                     # Assistant audio byte chunk
                     if not first_audio_seen:
@@ -203,14 +253,32 @@ class VoiceClientBenchmark:
 
 async def generate_synthetic_audio(text: str) -> bytes:
     """Synthesizes reference 16kHz PCM audio on-the-fly using Cartesia or Edge-TTS."""
-    from app.adapters.tts_cartesia import CartesiaTTSAdapter
     from app.core.config import settings
 
-    tts = CartesiaTTSAdapter(api_key=settings.CARTESIA_API_KEY, voice_id=settings.CARTESIA_VOICE_ID)
-    chunks = []
-    async for chunk in tts.synthesize_stream(text):
-        chunks.append(chunk)
-    return b"".join(chunks)
+    has_devanagari = bool(re.search(r'[\u0900-\u097F]', text))
+    if has_devanagari or not settings.CARTESIA_API_KEY:
+        from app.adapters.tts_edge import EdgeTTSAdapter
+
+        voice = settings.EDGE_TTS_INDIC_VOICE if has_devanagari else settings.EDGE_VOICE
+        tts = EdgeTTSAdapter(voice=voice)
+        chunks = []
+        async for chunk in tts.synthesize_stream(text):
+            chunks.append(chunk)
+        raw_audio = b"".join(chunks)
+        if is_mp3_data(raw_audio):
+            return convert_mp3_to_pcm16k(raw_audio)
+        return raw_audio
+    else:
+        from app.adapters.tts_cartesia import CartesiaTTSAdapter
+
+        tts = CartesiaTTSAdapter(api_key=settings.CARTESIA_API_KEY, voice_id=settings.CARTESIA_VOICE_ID)
+        chunks = []
+        async for chunk in tts.synthesize_stream(text):
+            chunks.append(chunk)
+        raw_audio = b"".join(chunks)
+        if is_mp3_data(raw_audio):
+            return convert_mp3_to_pcm16k(raw_audio)
+        return raw_audio
 
 
 async def pcm_chunks_from_bytes(data: bytes) -> AsyncGenerator[bytes, None]:
@@ -271,6 +339,14 @@ async def run_cli():
     parser.add_argument("--benchmark", action="store_true", help="Execute multi-turn conversational benchmark")
     parser.add_argument("--no-play", action="store_true", help="Disable local speaker playback")
     parser.add_argument("--save-output", type=str, help="Save assistant audio to .wav file")
+    parser.add_argument(
+        "--language",
+        "--lang",
+        dest="language",
+        choices=["auto", "en", "hi"],
+        default="auto",
+        help="Session language for Deepgram STT transcription and routing (auto, en, hi)",
+    )
 
     args = parser.parse_args()
 
@@ -281,11 +357,16 @@ async def run_cli():
     print("==================================================================")
     print(" Sahayak Voice Assistant: CLI Streaming Client & Benchmark Tool")
     print(f" Target Endpoint: {args.url}")
+    print(f" Session Language: {args.language}")
     print("==================================================================")
 
     try:
         async with websockets.connect(args.url) as ws:
             print("[CLIENT] Connected to voice server WebSocket.")
+
+            if args.language:
+                await ws.send(json.dumps({"event": "SET_LANGUAGE", "language": args.language}))
+                print(f"[CLIENT] Sent SET_LANGUAGE: '{args.language}'")
 
             if args.benchmark:
                 # Run multi-turn benchmark:
