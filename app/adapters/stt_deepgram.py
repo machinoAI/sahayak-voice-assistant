@@ -7,6 +7,7 @@ Supports interim and speech_final endpointing for ultra-low latency voice RAG.
 import asyncio
 import json
 import ssl
+import time
 from typing import AsyncGenerator, Optional
 import certifi
 import websockets
@@ -71,6 +72,30 @@ class DeepgramStreamSession:
         self._accumulator = TranscriptAccumulator()
         self._is_connected = False
         self._send_lock = asyncio.Lock()
+        self._last_audio_timestamp: float = time.time()
+        self._keepalive_task: Optional[asyncio.Task] = None
+
+    @property
+    def is_connected(self) -> bool:
+        """Returns True if the WebSocket connection is established and healthy."""
+        if not self._is_connected or self._ws is None:
+            return False
+        if hasattr(self._ws, "closed") and isinstance(self._ws.closed, bool):
+            if self._ws.closed:
+                return False
+        ws_state = getattr(self._ws, "state", None)
+        if ws_state is not None and not callable(ws_state):
+            name = getattr(ws_state, "name", None)
+            if name is not None and str(name) == "OPEN":
+                return True
+            try:
+                if int(ws_state) == 1:
+                    return True
+                if int(ws_state) == 3:  # State.CLOSED
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return self._is_connected
 
     async def start(self) -> None:
         """Connects to the Deepgram streaming WebSocket endpoint."""
@@ -101,6 +126,8 @@ class DeepgramStreamSession:
                 ssl=self._ssl_context,
             )
             self._is_connected = True
+            self._last_audio_timestamp = time.time()
+            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
             logger.info("[DEEPGRAM] Connected to streaming STT WebSocket.")
         except Exception as e:
             logger.error(f"[DEEPGRAM] Connection failed: {e}")
@@ -111,6 +138,7 @@ class DeepgramStreamSession:
         """Streams a raw linear16 PCM audio frame to Deepgram."""
         if not self._is_connected or not self._ws:
             return
+        self._last_audio_timestamp = time.time()
         async with self._send_lock:
             try:
                 await self._ws.send(chunk)
@@ -118,6 +146,26 @@ class DeepgramStreamSession:
                 self._is_connected = False
             except Exception as e:
                 logger.warning(f"[DEEPGRAM] Send audio error: {e}")
+
+    async def _keepalive_loop(self) -> None:
+        """Periodically transmits Deepgram KeepAlive control frames during conversational pauses."""
+        try:
+            while self._is_connected:
+                await asyncio.sleep(1.0)
+                if not self.is_connected:
+                    break
+                if time.time() - self._last_audio_timestamp >= 4.0:
+                    async with self._send_lock:
+                        if self.is_connected and self._ws:
+                            await self._ws.send(json.dumps({"type": "KeepAlive"}))
+        except asyncio.CancelledError:
+            pass
+        except (websockets.exceptions.ConnectionClosed, OSError) as e:
+            logger.warning(f"[DEEPGRAM] Keepalive connection dropped: {e}")
+            self._is_connected = False
+        except Exception as e:
+            logger.warning(f"[DEEPGRAM] Keepalive error: {e}")
+            self._is_connected = False
 
     async def receive_transcripts(self) -> AsyncGenerator[dict, None]:
         """Yields interim and final transcript events from Deepgram."""
@@ -161,6 +209,13 @@ class DeepgramStreamSession:
         if not self._is_connected or not self._ws:
             return
         self._is_connected = False
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except asyncio.CancelledError:
+                pass
+            self._keepalive_task = None
         try:
             await self._ws.send(json.dumps({"type": "CloseStream"}))
             await self._ws.close()
@@ -176,6 +231,11 @@ class MockDeepgramStreamSession:
     def __init__(self, language: str = "en-IN") -> None:
         self.language = language
         self._is_connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        """Returns True if the mock session is active."""
+        return self._is_connected
 
     async def start(self) -> None:
         self._is_connected = True

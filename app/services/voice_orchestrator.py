@@ -217,11 +217,25 @@ class VoiceRAGOrchestrator:
 
         tracker.log_step("TURN_INITIATED", {"transcript": final_transcript, "length": len(final_transcript)})
 
+        # Cancel any previous in-flight turn tasks (if a new turn triggers before prior turn fully completes)
+        tasks_to_cancel = []
+        curr_task = asyncio.current_task()
+        if self.active_generation_task and self.active_generation_task != curr_task and not self.active_generation_task.done():
+            self.active_generation_task.cancel()
+            tasks_to_cancel.append(self.active_generation_task)
+
+        if self.active_tts_task and not self.active_tts_task.done():
+            self.active_tts_task.cancel()
+            tasks_to_cancel.append(self.active_tts_task)
+
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+
         self.sentence_queue = asyncio.Queue()
         self.active_tts_task = asyncio.create_task(
             self._tts_worker(self.sentence_queue, websocket, tracker)
         )
-        self.active_generation_task = asyncio.current_task()
+        self.active_generation_task = curr_task
         collected_tokens: List[str] = []
 
         try:

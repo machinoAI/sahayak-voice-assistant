@@ -155,3 +155,44 @@ def test_deepgram_multilingual_session_configuration():
     m_session = mock_adapter.create_stream_session(language="hi")
     assert isinstance(m_session, MockDeepgramStreamSession)
     assert m_session.language == "hi"
+    assert not m_session.is_connected
+    asyncio.run(m_session.start())
+    assert m_session.is_connected
+    asyncio.run(m_session.close())
+    assert not m_session.is_connected
+
+
+def test_deepgram_keepalive_lifecycle():
+    """Verify DeepgramStreamSession keepalive task lifecycle and dispatch."""
+    from unittest.mock import AsyncMock, patch, MagicMock
+    from app.adapters.stt_deepgram import DeepgramStreamSession
+
+    async def _run():
+        mock_ws = AsyncMock()
+        mock_ws.closed = False
+        mock_ws.send = AsyncMock()
+        mock_ws.close = AsyncMock()
+
+        session = DeepgramStreamSession(api_key="test_token")
+        assert not session.is_connected
+
+        with patch("websockets.connect", new=AsyncMock(return_value=mock_ws)):
+            await session.start()
+            assert session.is_connected
+            assert session._keepalive_task is not None
+            assert not session._keepalive_task.done()
+
+            # Fast-forward idle time to trigger keepalive
+            session._last_audio_timestamp -= 5.0
+            await asyncio.sleep(1.1)
+
+            # Check that keepalive JSON frame was sent
+            sent_calls = [c.args[0] for c in mock_ws.send.call_args_list if isinstance(c.args[0], str)]
+            assert any("KeepAlive" in call for call in sent_calls)
+
+            # Close session and check task cancellation
+            await session.close()
+            assert not session.is_connected
+            assert session._keepalive_task is None or session._keepalive_task.done()
+
+    asyncio.run(_run())

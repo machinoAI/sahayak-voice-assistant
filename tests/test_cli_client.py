@@ -139,3 +139,49 @@ def test_live_cli_client_turn():
         await server_task
 
     asyncio.run(_run())
+
+
+def test_live_multi_turn_pause():
+    """Verify consecutive multi-turn voice queries across an 11-second pause on the same WebSocket."""
+    from app.core.config import settings
+    if not settings.DEEPGRAM_API_KEY or not settings.GROQ_API_KEY:
+        pytest.skip("Live API keys not configured")
+
+    import websockets
+    import uvicorn
+    from app.main import app
+    from client_stream import generate_synthetic_audio
+
+    async def _run():
+        port = 8780
+        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        server_task = asyncio.create_task(server.serve())
+
+        while not server.started:
+            await asyncio.sleep(0.05)
+
+        ws_url = f"ws://127.0.0.1:{port}/ws/voice"
+        client = VoiceClientBenchmark(ws_url=ws_url, enable_audio_out=False)
+
+        pcm_turn1 = await generate_synthetic_audio("What is PM Kisan?")
+        pcm_turn2 = await generate_synthetic_audio("Who is eligible for PM Kisan?")
+
+        async with websockets.connect(ws_url) as ws:
+            # Turn 1
+            metrics1 = await client.run_turn(ws, pcm_chunks_from_bytes(pcm_turn1))
+            assert metrics1["total_audio_bytes"] > 1000
+            assert len(metrics1["transcript"]) > 0
+
+            # Conversational pause of 11 seconds (exceeding Deepgram's 10s idle timeout)
+            await asyncio.sleep(11.0)
+
+            # Turn 2
+            metrics2 = await client.run_turn(ws, pcm_chunks_from_bytes(pcm_turn2))
+            assert metrics2["total_audio_bytes"] > 1000
+            assert len(metrics2["transcript"]) > 0
+
+        server.should_exit = True
+        await server_task
+
+    asyncio.run(_run())

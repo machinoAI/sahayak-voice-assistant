@@ -1083,6 +1083,8 @@
       micMediaStream: null,
       audioPlaybackQueue: [],
       isPlayingAudio: false,
+      currentAudioSource: null,
+      micGainNode: null,
       analyser: null,
     };
 
@@ -1168,6 +1170,7 @@
     }
 
     function resetTurnState(query) {
+      stopAudioPlayback();
       state.queryText = query;
       state.interimText = "";
       state.routerIntent = null;
@@ -1307,11 +1310,26 @@
       box.scrollTop = box.scrollHeight;
     }
 
-    function handleBufferClear() {
-      // Barge-in: flush audio queue and stop current source
+    function stopAudioPlayback() {
       state.audioPlaybackQueue = [];
-      document.getElementById("audioStatusText").innerText = "Audio Output: Interrupted (Cleared)";
-      document.getElementById("tokenCursor").style.display = "none";
+      if (state.currentAudioSource) {
+        try {
+          state.currentAudioSource.stop();
+        } catch (e) {}
+        state.currentAudioSource = null;
+      }
+      state.isPlayingAudio = false;
+      const statusText = document.getElementById("audioStatusText");
+      if (statusText) statusText.innerText = "Audio Output: Idle";
+    }
+
+    function handleBufferClear() {
+      // Barge-in: flush audio queue and stop active audio source
+      stopAudioPlayback();
+      const statusText = document.getElementById("audioStatusText");
+      if (statusText) statusText.innerText = "Audio Output: Interrupted (Cleared)";
+      const tokenCursor = document.getElementById("tokenCursor");
+      if (tokenCursor) tokenCursor.style.display = "none";
     }
 
     function updateLatencyBreakdown() {
@@ -1453,6 +1471,7 @@
           return;
         }
 
+        stopAudioPlayback();
         await initAudioContext();
         const stream = await mediaDevices.getUserMedia({
           audio: {
@@ -1491,7 +1510,11 @@
         };
 
         source.connect(processor);
-        processor.connect(state.audioCtx.destination);
+        const zeroGain = state.audioCtx.createGain();
+        zeroGain.gain.setValueAtTime(0, state.audioCtx.currentTime);
+        state.micGainNode = zeroGain;
+        processor.connect(zeroGain);
+        zeroGain.connect(state.audioCtx.destination);
         state.micProcessor = processor;
         state.micSource = source;
 
@@ -1522,6 +1545,10 @@
       if (state.micProcessor) {
         state.micProcessor.disconnect();
         state.micProcessor = null;
+      }
+      if (state.micGainNode) {
+        state.micGainNode.disconnect();
+        state.micGainNode = null;
       }
       if (state.micSource) {
         state.micSource.disconnect();
@@ -1580,8 +1607,12 @@
         source.buffer = audioBuffer;
         source.connect(state.analyser);
         state.analyser.connect(state.audioCtx.destination);
+        state.currentAudioSource = source;
 
         source.onended = () => {
+          if (state.currentAudioSource === source) {
+            state.currentAudioSource = null;
+          }
           playNextAudioChunk();
         };
         source.start();
