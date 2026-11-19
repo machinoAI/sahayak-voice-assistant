@@ -130,3 +130,28 @@ def test_deepgram_adapter_mock_fallback():
         assert "Sahayak" in transcripts[0]
 
     asyncio.run(_run())
+
+
+def test_deepgram_multilingual_session_configuration():
+    """Verify DeepgramStreamSession language parameterization and URL formation."""
+    from app.adapters.stt_deepgram import DeepgramSTTAdapter, DeepgramStreamSession, MockDeepgramStreamSession
+
+    adapter = DeepgramSTTAdapter(api_key="test_key")
+
+    # Default language session
+    s_default = adapter.create_stream_session()
+    assert s_default.language == "en-IN"
+
+    # Hindi language session
+    s_hi = adapter.create_stream_session(language="hi")
+    assert s_hi.language == "hi"
+
+    # Auto language session
+    s_auto = adapter.create_stream_session(language="auto")
+    assert s_auto.language == "auto"
+
+    # Mock session fallback accepts language
+    mock_adapter = DeepgramSTTAdapter(api_key=None)
+    m_session = mock_adapter.create_stream_session(language="hi")
+    assert isinstance(m_session, MockDeepgramStreamSession)
+    assert m_session.language == "hi"
