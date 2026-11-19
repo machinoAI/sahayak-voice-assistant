@@ -74,10 +74,22 @@ class DeepgramStreamSession:
 
     async def start(self) -> None:
         """Connects to the Deepgram streaming WebSocket endpoint."""
+        lang_str = (self.language or "en-IN").strip().lower()
+        if lang_str in ("auto", "multi"):
+            lang_param = "language=multi"
+        elif lang_str in ("en", "en-in"):
+            lang_param = "language=en-IN"
+        elif lang_str == "en-us":
+            lang_param = "language=en-US"
+        elif lang_str in ("hi", "hi-in"):
+            lang_param = "language=hi"
+        else:
+            lang_param = f"language={self.language}"
+
         url = (
             f"wss://api.deepgram.com/v1/listen?"
             f"encoding=linear16&sample_rate=16000&channels=1&"
-            f"model={self.model}&language={self.language}&"
+            f"model={self.model}&{lang_param}&"
             f"punctuate=true&interim_results=true&smart_format=true&"
             f"endpointing={self.endpointing_ms}"
         )
@@ -161,12 +173,13 @@ class DeepgramStreamSession:
 class MockDeepgramStreamSession:
     """Safe fallback session used when no DEEPGRAM_API_KEY is configured."""
 
-    def __init__(self) -> None:
+    def __init__(self, language: str = "en-IN") -> None:
+        self.language = language
         self._is_connected = False
 
     async def start(self) -> None:
         self._is_connected = True
-        logger.warning("[DEEPGRAM] Operating with MockDeepgramStreamSession (no API key).")
+        logger.warning(f"[DEEPGRAM] Operating with MockDeepgramStreamSession (no API key, language={self.language}).")
 
     async def send_audio(self, chunk: bytes) -> None:
         pass
@@ -196,13 +209,15 @@ class DeepgramSTTAdapter:
 
     def create_stream_session(
         self,
+        language: Optional[str] = None,
     ) -> DeepgramStreamSession | MockDeepgramStreamSession:
         """Creates a streaming WebSocket session instance."""
+        target_lang = language or self.language
         if not self.api_key:
-            return MockDeepgramStreamSession()
+            return MockDeepgramStreamSession(language=target_lang)
         return DeepgramStreamSession(
             api_key=self.api_key,
-            language=self.language,
+            language=target_lang,
             model=self.model,
             endpointing_ms=self.endpointing_ms,
         )

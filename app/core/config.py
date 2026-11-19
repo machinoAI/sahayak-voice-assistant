@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     DEEPGRAM_API_KEY: Optional[str] = None
     DEEPGRAM_MODEL: str = "nova-2"
     DEEPGRAM_LANGUAGE: str = "en-IN"
+    DEFAULT_LANGUAGE: str = "auto"
+    DEEPGRAM_LANGUAGE_MODELS: dict[str, str] = {
+        "en": "language=en-IN&model=nova-2",
+        "hi": "language=hi&model=nova-2",
+        "auto": "language=multi&model=nova-2",
+    }
     SARVAM_API_KEY: Optional[str] = None
 
     # LLM Provider (Groq / Gemini)
@@ -38,6 +44,7 @@ class Settings(BaseSettings):
     CARTESIA_API_KEY: Optional[str] = None
     CARTESIA_VOICE_ID: Optional[str] = None
     EDGE_VOICE: str = "en-IN-NeerjaNeural"  # e.g., "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"
+    EDGE_TTS_INDIC_VOICE: str = "hi-IN-SwaraNeural"
 
     # External Web Search (Tavily) & CRAG Routing
     TAVILY_API_KEY: Optional[str] = None

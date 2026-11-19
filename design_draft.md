@@ -1,325 +1,302 @@
-# Technical Design: Advanced Classification, Routing, and External Knowledge Access for Sahayak Voice Assistant
+# Technical Design: Indic & Multilingual Speech Support for Sahayak Voice Assistant
 
 *   **Author:** Amankumar006
-*   **Status:** Approved
-*   **Date:** 2026-11-09
-*   **Target Components:** `app/services/voice_orchestrator.py`, `app/adapters/semantic_router.py`, `app/interfaces/adapters.py`, `app/core/config.py`, `app/main.py`
+*   **Status:** Draft
+*   **Date:** 2026-11-14
+*   **Target Components:** `app/adapters/stt_deepgram.py`, `app/adapters/llm_groq.py`, `app/adapters/tts_cartesia.py`, `app/core/orchestrator.py`, `app/core/config.py`, `app/static/index.html`
 *   **Target Project:** `sahayak-voice-assistant`
 
 --------------------------------------------------------------------------------
 
 ## Overview
 
-Sahayak is an ultra-low latency voice assistant designed for Indian multilingual environments, operating within a voice-to-audio Time-to-First-Audio-Byte (TTFAB) budget of under 1.2 seconds using Deepgram streaming STT, Qdrant hybrid retrieval, Groq LLM streaming (`openai/gpt-oss-120b`), and Cartesia Sonic / Edge TTS.
+Sahayak is a voice assistant created to serve Indian administrative and citizen service contexts. While its core pipeline achieves sub-700ms voice-to-voice turn latency, its runtime is hardcoded to English speech-to-text (Deepgram `nova-2` English model), English-oriented LLM prompting, and English text-to-speech (Cartesia Sonic English voices with an `en-US-JennyNeural` fallback).
 
-While local vector retrieval handles static domain documents (such as government welfare schemes and preset FAQs) with single-digit millisecond latency (~15–25ms), it cannot answer queries regarding dynamic real-time information, current affairs, breaking news, weather, live sports, or topics missing from the local index. Conversely, invoking external web search naively on every user turn introduces 600ms to 2,500ms of network overhead, destroying conversational responsiveness.
-
-This document designs an **Advanced Classification, Routing, and External Knowledge Architecture** grounded in recent academic literature:
-1. **Outcome-Aware Semantic Routing** (<0.5ms CPU, pure Python) replacing brittle keyword regex heuristics.
-2. **Corrective RAG (CRAG) Tri-State Confidence Evaluation** to arbitrate between local knowledge and web search.
-3. **Speculative Concurrent Retrieval** to hide external API latency behind vector search.
-4. **Tavily Web Search Adapter** with direct answer extraction and strict fail-open timeout bounding.
+This design adds multilingual speech capabilities to Sahayak, focusing on Hindi (`hi-IN`), code-switched Hindi-English (Hinglish), and regional Indian accents. The design addresses the complete conversational pipeline:
+1. Dynamic language parameterization in the Deepgram streaming WebSocket client.
+2. System prompt steering in Groq (`llama-3.3-70b-versatile`) to detect user language and output grammatically correct Hindi in Devanagari script or code-switched Hinglish without English language drift.
+3. Dual-tier TTS routing that balances Cartesia low-latency multilingual synthesis with high-accuracy Microsoft Edge-TTS neural Indic voices (`hi-IN-SwaraNeural`, `hi-IN-MadhurNeural`).
+4. Client-side language selection in the web interface with WebSocket control frame propagation.
 
 ## The Problem
 
-1. **Static Corpus Blindness**: A local vector database contains only pre-indexed documents. When users ask time-sensitive questions (*"What is the weather in Delhi today?"*, *"What are the latest news updates?"*, *"What is the current price of onion?"*), local retrieval returns irrelevant or outdated chunks.
-2. **The Voice Latency Budget Bottleneck**: In text chat interfaces, adding a 300ms–600ms LLM call to classify intent or invoke tools is acceptable. In a streaming voice assistant, TTFAB is capped at 1.2s. Remote LLM routers (such as GPT-4o-mini) add ~669ms of sequential latency (arXiv:2505.14524), consuming over 50% of the entire budget before retrieval even begins.
-3. **Regex Classification Fragility**: While hardcoded keyword matching (`today`, `latest`, `news`) runs in <0.1ms, it is fragile to phrasing variations and syntactic surface changes (arXiv:2604.10745), leading to false triggers on static queries (*"What is today's eligibility for PM Kisan?"*) and false negatives on implicit real-time queries (*"Who won the cricket match last night?"*).
-4. **Binary Retrieval Dilemma**: Binary routing (search web vs. use local docs) fails on ambiguous queries where the local knowledge base contains general background but lacks the specific current criteria.
-5. **Sequential Retrieval Latency Stacking**: Executing STT $\to$ Local Retrieval (25ms) $\to$ Decision Logic $\to$ Web Search (750ms) $\to$ LLM streaming (800ms) produces cumulative latency exceeding 2.5 seconds.
-6. **External Network Degradation & Cold Starts**: Third-party search APIs suffer latency spikes and TLS handshake delays. The pipeline requires bounded timeouts and fail-open resilience so audio generation is never blocked if external search stalls.
+1. **Monolingual Architecture for Multilingual Users**: In target Indian deployment contexts, citizens and field workers converse in Hindi or code-switched Hinglish. When a user speaks Hindi to the current English Deepgram model, the STT output produces either phonetic English gibberish or empty transcripts, causing pipeline termination.
+2. **Transcription-TTS Script Mismatch**: When a multilingual LLM generates Hindi responses, it can generate either Devanagari script (e.g., "प्रधानमंत्री किसान सम्मान निधि योजना के तहत...") or Romanized Hinglish (e.g., "PM Kisan Samman Nidhi Yojana ke tahat..."). English TTS models attempting to read Romanized Hinglish pronounce phonemes with English phonetic rules, rendering output unintelligible. Conversely, standard Western Cartesia models reject or distort raw Devanagari Unicode codepoints.
+3. **Latency vs. Voice Naturalness Trade-off**: High-quality Indic voices in Edge-TTS (`hi-IN-SwaraNeural`) deliver natural prosody and correct inflection for Hindi and Devanagari numbers, but operate via an external HTTP/WebSocket service returning MP3 chunks (~450ms TTFAB). Cartesia provides ultra-low latency (~150ms TTFAB) streaming PCM, but has limited native phoneme support for regional Indian dialects. The architecture must explicitly manage this latency difference.
+4. **Static Connection Boundaries in Deepgram**: Deepgram's live streaming WebSocket requires setting the `language` query parameter during the initial handshake. Changing the language dynamically on the client cannot be done on a live socket without either re-establishing the socket connection or operating in a generic multilingual model mode (`language=multi`) that carries higher word error rates.
 
 ## Goals
 
-*   **Sub-1ms Zero-Dependency Semantic Routing**: Implement an in-process sparse TF-IDF / n-gram centroid semantic router (OATS, arXiv:2603.13426) running on CPU to classify query intent into `[LOCAL_SCHEME_FAQ, REALTIME_TEMPORAL, OUT_OF_DOMAIN]` in `<0.5ms` with zero heavy machine learning dependencies.
-*   **Corrective RAG (CRAG) Tri-State Calibration**: Replace naive binary thresholds with a tri-state confidence evaluator (arXiv:2401.15884):
-    *   `CORRECT` ($\ge 0.82$): High local similarity; bypass web search to preserve ~1.1s voice response.
-    *   `INCORRECT` ($< 0.55$): Low local similarity; suppress irrelevant local chunks and rely exclusively on web search.
-    *   `AMBIGUOUS` ($0.55 \le \text{score} < 0.82$): Merge local domain context with live web snippets.
-*   **Speculative Concurrent Execution**: For queries classified as `REALTIME_TEMPORAL`, dispatch local Qdrant retrieval and Tavily search concurrently via `asyncio.create_task` (RaLMSpec, arXiv:2401.14021), canceling the Tavily call if local retrieval yields a decisive score ($\ge 0.82$).
-*   **Sub-Second Web Retrieval & Synthesis**: Configure Tavily search depth (`search_depth="basic"`, `include_answer=True`) to maintain average retrieval latency around 700–800ms, extracting direct AI answers (`score=1.0`) and ranked snippets (`score=0.95–0.90`).
-*   **Fail-Open Timeout Bounding**: Enforce a strict 4.0-second timeout on web queries with silent fallback to available context, preventing client connection drops or pipeline stalls during third-party degradation.
+*   **Deepgram Indic Language Configuration**: Enable configurable STT language selection, supporting `hi` (Hindi), `en-IN` (Indian English), and `multi` (multilingual auto-detection) on WebSocket connection initialization.
+*   **Groq Multilingual Prompt Steering**: Update orchestrator system prompts to enforce strict language mirroring: when input is Hindi or Hinglish, output valid Hindi in Devanagari script; when input is English, output standard English.
+*   **Hybrid Indic TTS Routing**: Implement language-aware TTS voice dispatching:
+    *   English: Cartesia Sonic English voice (`c45bc5ec-5968-4f0b-a898-92743eed0000`).
+    *   Hindi / Hinglish: Edge-TTS Indian neural voice (`hi-IN-SwaraNeural` / `hi-IN-MadhurNeural`) with Cartesia multilingual voice evaluation.
+*   **Client Language Selection Protocol**: Introduce a language selection dropdown in `index.html` (`English`, `Hindi`, `Auto`) that sends a `{ "event": "SET_LANGUAGE", "language": "<code_or_mode>" }` control frame over the WebSocket.
+*   **Sub-1000ms Multilingual Latency Budget**: Maintain end-to-end voice-to-voice latency below 1000ms for Hindi turns using Edge-TTS, and below 700ms for English turns using Cartesia.
 
 ## Non-Goals
 
-*   **Remote LLM Pre-Retrieval Routing**: Using external multi-turn LLMs or prompt-based function-calling loops prior to retrieval is explicitly excluded due to latency constraints (>600ms overhead).
-*   **Deep Web Crawling / Agent Browsing**: Multi-hop web navigation, scraping arbitrary JavaScript pages, or downloading PDFs during a voice turn is out of scope.
-*   **Continuous Vector DB Ingestion from Search**: Automatically caching or writing live web results back into the permanent Qdrant collection is out of scope for this query path.
-*   **Conversational Clarification Prompts**: Pausing execution to ask users clarifying search questions before issuing queries is excluded; search queries must derive directly from the spoken transcript.
+*   **Full 22 Official Scheduled Indian Languages**: This phase targets Hindi and Hinglish. Support for Tamil, Telugu, Bengali, Marathi, and other regional languages is deferred to subsequent iterations.
+*   **Local On-Device STT/TTS Models**: Running local Whisper models or local Indic TTS models on consumer hardware is out of scope. The pipeline continues to rely on cloud STT/TTS APIs.
+*   **Machine Translation Intermediate Layers**: Translating Hindi speech to English text, processing in English, and translating back to Hindi is explicitly excluded due to latency overhead (>800ms) and loss of conversational tone. Groq must reason and reply directly in the target language.
+*   **Voice Cloning / Custom Indic Voice Training**: Training proprietary voice checkpoints or finetuning acoustic models is out of scope.
 
-## Resolved Design Decisions
+## Open Questions
 
-*   **Decision 1: Zero-Dependency Sparse Centroid Classifier**: Rather than adding 100MB+ dependencies (`torch`, `onnxruntime`, `fastembed`), the semantic router uses an in-process, pure Python sparse word and character n-gram cosine similarity model. It pre-computes normalized centroid vectors from representative seed utterances for `LOCAL_SCHEME_FAQ`, `REALTIME_TEMPORAL`, and `OUT_OF_DOMAIN`. It executes in `<0.5ms` on CPU with deterministic performance.
-*   **Decision 2: Threshold Harmonization**: The upper confidence threshold is uniformly calibrated at `0.82` (`CRAG_HIGH_THRESHOLD`), and the lower confidence bound is set to `0.55` (`CRAG_LOW_THRESHOLD`).
-*   **Decision 3: Non-Blocking Speculative Cancellation**: When a decisive local score is obtained, `search_task.cancel()` is called and wrapped in `asyncio.shield` or exception suppression so cancellation is clean and does not log spurious error traces.
+*   **Question 1**: Does Deepgram's `language=multi` parameter handle code-switched Hinglish with acceptable word error rate, or does explicit selection between `hi` and `en-IN` provide significantly higher transcription accuracy for administrative queries?
+*   **Question 2**: For Hinglish speech, should Groq generate output in Devanagari script or Romanized Latin script? Edge-TTS `hi-IN` voices fail on Latin script, whereas Cartesia fails on Devanagari Unicode. Which script target should serve as the canonical representation?
 
 ## Critical User Journeys (CUJs)
 
-### CUJ 1: Real-Time Temporal Query Resolution (Speculative Path)
-*   **Given**: A user is connected to `/ws/voice` and speaks into their microphone.
-*   **When**: The user asks *"What is the latest news in India today?"*.
-*   **Then**: The semantic router detects `REALTIME_TEMPORAL` intent in <0.5ms, dispatches speculative Tavily search in parallel with Qdrant, merges the real-time news snippets into the prompt, and the assistant streams an accurate spoken update with TTFAB under 3.5s.
+### CUJ 1: Citizen Queries Scheme Details in Hindi
+*   **Given**: The user opens the Sahayak web interface and selects "Hindi" or "Auto" in the language selector.
+*   **When**: The user presses the microphone and speaks: *"प्रधानमंत्री आवास योजना की पात्रता क्या है?"*
+*   **Then**:
+    1. Deepgram streams Hindi interim and final transcripts in Devanagari script.
+    2. The semantic router classifies the query as `LOCAL_SCHEME_FAQ`.
+    3. FastEmbed retrieves scheme chunks from Qdrant.
+    4. Groq generates an explanatory response in natural Hindi in Devanagari script.
+    5. The TTS engine dispatches the response to `hi-IN-SwaraNeural`, streaming synthesized audio back to the client in under 1000ms.
 
-### CUJ 2: Static Domain Fast Path (Bypass Web Search)
-*   **Given**: A user asks *"What is the eligibility for PM Kisan scheme?"*.
-*   **When**: The semantic router classifies the query as `LOCAL_SCHEME_FAQ` and Qdrant yields matching scheme documentation with similarity score $0.92$ (`CORRECT`).
-*   **Then**: External web search is completely bypassed; local retrieval finishes in <25ms, preserving a sub-1.2s TTFAB.
+### CUJ 2: Mixed Code-Switched (Hinglish) Inquiry
+*   **Given**: The user has language set to "Auto" or "Hinglish".
+*   **When**: The user speaks: *"Mera ration card renew kaise hoga aur kya documents submit karne padenge?"*
+*   **Then**:
+    1. Deepgram captures the mixed vocabulary.
+    2. Groq understands the combined Hindi grammar and English loanwords ("ration card", "renew", "documents", "submit").
+    3. Groq formulates the response in accessible conversational Hindi (Devanagari script with loanwords preserved).
+    4. Audio is synthesized and streamed back without pronunciation distortion.
 
-### CUJ 3: Ambiguous Retrieval Hybrid Merge (CRAG Path)
-*   **Given**: A user asks *"Did the government change the budget allocation for Ayushman Bharat recently?"*.
-*   **When**: Qdrant returns general scheme info with an ambiguous score of $0.68$ (`AMBIGUOUS`).
-*   **Then**: The CRAG evaluator merges both the baseline local scheme info and the latest Tavily web updates, producing a synthesized answer without context pollution.
-
-### CUJ 4: Out-of-Domain General Knowledge Fallback
-*   **Given**: A user asks an open-domain query absent from the local index (*"Who was the first governor of RBI?"*).
-*   **When**: Qdrant returns irrelevant documents with scores $< 0.55$ (`INCORRECT`).
-*   **Then**: The local chunks are pruned out, and Tavily search is executed exclusively, returning the grounded answer directly.
-
-### CUJ 5: Third-Party Search Timeout Resilience
-*   **Given**: An external network degradation causes Tavily to hang.
-*   **When**: Request latency reaches 4.0 seconds.
-*   **Then**: The adapter logs a warning, cancels the HTTP call, returns an empty document list, and allows the LLM to complete the voice turn without dropping the client WebSocket.
+### CUJ 3: Dynamic Language Switch During Active Session
+*   **Given**: The user is in an active session with WebSocket connected.
+*   **When**: The user switches the language dropdown from "English" to "Hindi" in the UI header.
+*   **Then**:
+    1. The client transmits a `SET_LANGUAGE` control frame to the server.
+    2. The orchestrator updates the session state.
+    3. The orchestrator reconfigures the Deepgram client session without dropping the client WebSocket connection.
+    4. Subsequent audio turns process under the new language configuration.
 
 --------------------------------------------------------------------------------
 
 ## Technical Plan (Architecture)
 
-### 1. Architectural System Overview
+### Architectural Overview
+
+The multilingual architecture establishes end-to-end language coordination across all four pipeline stages (STT, Routing, LLM Generation, TTS Synthesis) through a centralized session language context managed by the `VoiceOrchestrator`.
 
 ```mermaid
 flowchart TD
-    UserAudio["WebSocket Client (/ws/voice)\nIncoming Audio Stream"] --> STT["Deepgram Streaming STT (Nova-2)"]
-    STT --> FinalTranscript["Final Recognized Transcript"]
+    UI["Web Client (index.html)"] -->|"PCM 16kHz + SET_LANGUAGE"| WS["FastAPI WebSocket (/ws/voice)"]
+    WS --> ORCH["VoiceOrchestrator (Session Language State)"]
     
-    FinalTranscript --> SessionMem["Session Memory Query Augmentation\n(Resolve anaphoric pronouns)"]
-    SessionMem --> AugmentedQuery["Augmented Search Query"]
-    
-    AugmentedQuery --> SemanticRouter{"Semantic Router (<0.5ms CPU)\n(Sparse Prototype Centroids)"}
-    
-    SemanticRouter -- "Definite Temporal Query" --> SpeculativeFork["Speculative Concurrent Dispatch\n(asyncio.create_task)"]
-    SemanticRouter -- "Standard Domain Query" --> QdrantOnly["Dispatch Qdrant Hybrid Search (~20ms)"]
-    
-    SpeculativeFork --> TaskA["Task A: Qdrant Search"]
-    SpeculativeFork --> TaskB["Task B: Tavily Search (In-flight)"]
-    
-    QdrantOnly --> CRAGEval{"CRAG Tri-State Evaluator"}
-    TaskA --> CRAGEval
-    
-    CRAGEval -- "Score >= 0.82 (CORRECT)" --> CancelTavily["Cancel Task B if running;\nBypass Web Search"]
-    CRAGEval -- "0.55 <= Score < 0.82 (AMBIGUOUS)" --> AwaitTavily["Await Task B (or dispatch Tavily);\nMerge Local + Web Docs"]
-    CRAGEval -- "Score < 0.55 (INCORRECT)" --> PureTavily["Await Task B (or dispatch Tavily);\nDiscard Local Docs"]
-    
-    CancelTavily --> PromptBuilder["Prompt Builder\n(Inject System + Memory + Docs)"]
-    AwaitTavily --> PromptBuilder
-    PureTavily --> PromptBuilder
-    
-    PromptBuilder --> GroqStream["Groq LLM Streaming\n(openai/gpt-oss-120b)"]
-    GroqStream --> SentenceSplitter["Sentence Delimiter\n(Regex punctuation boundary)"]
-    SentenceSplitter --> TTSWorker["Decoupled TTS Worker\n(Cartesia Sonic / Edge TTS)"]
-    TTSWorker --> OutputAudio["Stream Audio Packets to /ws/voice"]
-```
-
-### 2. End-to-End Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as User (Mic)
-    participant WS as WebSocket (/ws/voice)
-    participant Orch as VoiceRAGOrchestrator
-    participant Router as Semantic Router (<0.5ms)
-    participant Qdrant as Qdrant Vector DB
-    participant Tavily as Tavily Web Search
-    participant Groq as Groq LLM (Streaming)
-    participant TTS as TTS Engine (Cartesia/Edge)
-
-    User->>WS: Audio Chunks (PCM 16kHz)
-    WS->>Orch: Final Transcript ("What is the latest news in India today?")
-    Orch->>Router: classify_intent(query)
-    Router-->>Orch: Intent: REALTIME_TEMPORAL [+0.3ms]
-    
-    Note over Orch: Launch Speculative Concurrent Fetching
-    par Parallel Retrieval
-        Orch->>Qdrant: hybrid_search(query, top_k=2)
-        Orch->>Tavily: search(query, search_depth="basic")
+    subgraph STT ["Speech-to-Text Stage"]
+        ORCH -->|"Audio Chunks"| DG["DeepgramSTTAdapter"]
+        DG -->|"hi / en-IN / multi"| DGW["Deepgram WebSocket API"]
+        DGW -->|"Devanagari or English Transcript"| ORCH
     end
-    
-    Qdrant-->>Orch: Local docs returned (score: 0.48) [+22ms]
-    Note over Orch: CRAG Evaluator: score 0.48 < 0.55 -> INCORRECT (Discard local docs)
-    
-    Tavily-->>Orch: Search results & direct AI answer [+754ms]
-    Note over Orch: Web search completed. Local docs suppressed.
-    
-    Orch->>Groq: Stream chat completion (System + Memory + Web Docs)
-    Groq-->>Orch: First Token [+815ms]
-    Orch->>TTS: Sentence 1 ("India's Parliament opened for a record...")
-    TTS-->>WS: Binary audio chunk (TTFAB: ~3.7s total turn)
-    WS-->>User: Spoken audio out of speakers
+
+    subgraph Routing ["Routing & Retrieval"]
+        ORCH -->|"Query Text"| ROUTER["SemanticRouter (Bilingual Lexicon)"]
+        ROUTER -->|"LOCAL_SCHEME_FAQ"| QDRANT["QdrantVectorStoreAdapter (FastEmbed)"]
+        ROUTER -->|"REALTIME_TEMPORAL"| TAVILY["TavilySearchAdapter (Speculative)"]
+    end
+
+    subgraph LLM ["Generation Stage"]
+        QDRANT -->|"Context Chunks"| GROQ["GroqLLMAdapter (llama-3.3-70b-versatile)"]
+        TAVILY -->|"Web Snippets"| GROQ
+        ORCH -->|"Bilingual System Prompt"| GROQ
+        GROQ -->|"Devanagari Hindi or English Tokens"| DEC["Token Stream Buffer"]
+    end
+
+    subgraph TTS ["Synthesis Stage"]
+        DEC -->|"Sentence Chunk"| SCRIPT_DET{"Script & Language Detector"}
+        SCRIPT_DET -->|"Devanagari [\\u0900-\\u097F]"| EDGE["EdgeTTSAdapter (hi-IN-SwaraNeural)"]
+        SCRIPT_DET -->|"Latin ASCII / English"| CARTESIA["CartesiaTTSAdapter (Sonic English)"]
+        EDGE -->|"24kHz PCM Chunks"| WS
+        CARTESIA -->|"24kHz PCM Chunks"| WS
+    end
 ```
 
-### 3. Tool Selection & Classification Decision Matrix
+### Component Details
 
-| Query Intent Class | Example Query | Local Vector Score ($\theta$) | Routing Decision | Tool Invoked | Rationale & Latency Budget |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Local Welfare Scheme (High Confidence)** | *"Who is eligible for PM Kisan?"* | $\text{score} \ge 0.82$ (`CORRECT`) | Fast Path (Bypass Web Search) | **Qdrant Only** | Preserves sub-1.2s voice budget. Local knowledge is authoritative. |
-| **Real-Time Temporal Fact** | *"What is the weather in Delhi today?"* | Any | Speculative Concurrent Path | **Qdrant + Tavily (Parallel)** | Router flags real-time intent. Tavily search overlaps with vector lookup. |
-| **Ambiguous / Boundary Scheme Query** | *"Did the subsidy increase this year?"* | $0.55 \le \text{score} < 0.82$ (`AMBIGUOUS`) | Corrective Hybrid Merge | **Qdrant + Tavily** | Local context provides scheme rules; web search provides recent update. |
-| **Out-of-Domain General Knowledge** | *"Who was the first governor of RBI?"* | $\text{score} < 0.55$ (`INCORRECT`) | Pure External Fallback | **Tavily Only** | Local chunks are suppressed to prevent hallucinations; web results used exclusively. |
-| **External Search Outage / Network Stall** | *"Current stock price of TCS"* | Any | Fail-Open Timeout (4.0s) | **Tavily (Timeout) $\to$ Fallback** | Request aborts after 4.0s. Voice turn completes using baseline context. |
+#### 1. Deepgram STT Adapter (`app/adapters/stt_deepgram.py`)
+*   **Dynamic Language Parameterization**: Modify `DeepgramSTTAdapter.start_stream()` to accept a `language: str = "en"` parameter. Map internal language codes:
+    *   `"en"` $\to$ `language=en-US&model=nova-2`
+    *   `"hi"` $\to$ `language=hi&model=nova-2`
+    *   `"auto"` $\to$ `detect_language=true&model=nova-2`
+*   **Socket Reconnection Lifecycle**: When the client issues a language change during an ongoing session, the adapter terminates the existing Deepgram streaming socket and re-initiates a handshake with the new query parameters without dropping the client-side browser WebSocket.
+
+#### 2. Bilingual Semantic Router (`app/adapters/semantic_router.py`)
+*   **Devanagari & Hinglish Lexicon Expansion**: Augment the router's rule-based regex patterns and sparse term frequencies to recognize Hindi vocabulary in both Devanagari script and Latin transliteration:
+    *   `LOCAL_SCHEME_FAQ`: Add Devanagari terms (`योजना`, `पात्रता`, `आवेदन`, `लाभार्थी`, `पेंशन`, `सब्सिडी`, `दस्तावेज`, `राशन`) and Hinglish terms (`yojana`, `patrata`, `aavedan`, `labharthi`, `pension`, `subsidy`, `dastavez`).
+    *   `REALTIME_TEMPORAL`: Add Devanagari terms (`आज`, `ताज़ा`, `समाचार`, `मौसम`, `कल`, `स्कोर`, `दाम`, `भाव`) and Hinglish terms (`aaj`, `taaza`, `samachar`, `mausam`, `kal`, `bhav`).
+*   **Normalization**: Apply Unicode NFKC normalization prior to token extraction so combined Devanagari matras and modifier characters evaluate deterministically.
+
+#### 3. Groq LLM Adapter (`app/adapters/llm_groq.py`)
+*   **Language-Steering System Prompt**: Revise the base system prompt to instruct `llama-3.3-70b-versatile` to dynamically match the user's spoken language without explicit translation commands:
+    ```text
+    You are Sahayak, an AI voice assistant serving citizens in India.
+    Language Guidelines:
+    1. If the user addresses you in Hindi or Hinglish, respond strictly in natural conversational Hindi written in Devanagari script.
+    2. If the user addresses you in English, respond in standard English.
+    3. Retain recognized official terminology and common loanwords in their familiar form (e.g., आधार कार्ड, राशन कार्ड, बैंक खाता, OTP).
+    4. Keep spoken responses concise (1 to 2 short sentences, maximum 35 words) so synthesis latency remains minimal.
+    5. Never output markdown formatting, bullet points, asterisks, or numbered lists.
+    ```
+*   **Devanagari Number Normalization**: Prompt instructions direct the model to spell out currency and numbers in Hindi words or standard Arabic numerals without complex mathematical symbols to prevent TTS token stumbles.
+
+#### 4. Dual-Tier TTS Dispatcher (`app/core/orchestrator.py` & `app/adapters/tts_cartesia.py`)
+*   **Unicode Script Detection**: Inspect the initial characters of each buffered sentence using a fast regex: `re.search(r'[\u0900-\u097F]', sentence_text)`.
+*   **Routing Logic**:
+    *   **Hindi / Devanagari**: Route to `EdgeTTSAdapter` with voice `hi-IN-SwaraNeural` (female) or `hi-IN-MadhurNeural` (male). Edge-TTS receives full sentences and streams synthesized PCM back via its internal executor.
+    *   **English**: Route to `CartesiaTTSAdapter` with voice ID `c45bc5ec-5968-4f0b-a898-92743eed0000` over WebSocket.
+    *   **Fallback**: If Cartesia credentials are absent or fail, all English turns fall back to `EdgeTTSAdapter` using `en-US-JennyNeural`.
+*   **Audio Format Standardization**: Ensure both Cartesia and Edge-TTS output standard raw 16-bit linear PCM at 24kHz single-channel, preserving playback buffer compatibility on the frontend.
+
+#### 5. Session State & Protocol (`app/core/orchestrator.py`)
+*   **Control Frame Processing**: Add a handler for JSON control messages received over the WebSocket:
+    ```json
+    { "event": "SET_LANGUAGE", "language": "hi" }
+    ```
+*   **Session State Record**: Store `session_language` in the orchestrator instance, propagating the setting to STT connection initialization and telemetry metadata.
+
+#### 6. Frontend UI (`app/static/index.html`)
+*   **Header Language Control**: Add a dropdown selector in the top navigation bar alongside the WebSocket connection badge:
+    *   Options: `English (Default)`, `हिन्दी (Hindi)`, `Auto-Detect`.
+*   **Event Dispatch**: On selection change, transmit `{ "event": "SET_LANGUAGE", "language": selectedValue }` immediately if the socket is open.
+*   **Telemetry Display**: Update the telemetry bar to indicate the active speech language alongside Turn ID and routing decisions.
 
 --------------------------------------------------------------------------------
 
 ## Alternatives Considered
 
-### Alternative 1: Remote LLM Query Router (e.g. GPT-4o-mini)
-*   **Description**: Dispatch a micro-prompt to a remote LLM before retrieval to classify intent and select tools.
-*   **Pros**: High natural language understanding and multi-lingual nuance.
-*   **Cons**: Adds ~669ms of sequential round-trip latency on the critical voice path (arXiv:2505.14524), instantly exhausting more than half of the sub-1.2s TTFAB budget.
-*   **Reason for Rejection**: `Rejected by author: Remote LLM routing latency is incompatible with real-time streaming voice interactions.`
+### Alternative A: Two-Way Machine Translation Layer (IndicTrans2 / Cloud Translation)
+*   **Mechanism**: Maintain an English-only core pipeline by inserting an automated machine translation stage: Hindi speech is transcribed to text, translated from Hindi to English, processed through English semantic routing and English Groq prompts, and the generated English response is translated back into Hindi before speech synthesis.
+*   **Pros**: Reuses existing English system prompts, English vector search indices, and English intent routing regexes without modification.
+*   **Cons**: Adds two sequential external translation network calls, injecting between 600ms and 1200ms of extra latency per turn. Grammatical nuance and tone degrade across double-translation hops.
+*   **Reason for Rejection**: `Rejected by author: Introduces 600ms to 1200ms of sequential translation latency, exceeding the 1000ms voice turnaround budget. Direct bilingual prompting in Groq eliminates translation hops and preserves conversational inflection.`
 
-### Alternative 2: Pure Regex Keyword Routing
-*   **Description**: Rely solely on hardcoded regex sets (`today`, `latest`, `news`, etc.) to trigger web search.
-*   **Pros**: Zero latency (~0.1ms) and zero memory footprint.
-*   **Cons**: Brittle to phrasing variations, susceptible to false positives (*"What is today's procedure for PM Kisan?"*), and fails on implicit temporal queries (*"Who won the match yesterday?"* if phrased without exact keywords) (arXiv:2604.10745).
-*   **Reason for Rejection**: `Rejected by author: Insufficient robustness for production conversational voice.`
+### Alternative B: Pure Cartesia Multilingual Model with Phonetic Transliteration
+*   **Mechanism**: Avoid introducing Edge-TTS by converting all Devanagari Hindi text to Romanized Latin phonemes and passing the transliterated string to Cartesia's multilingual model.
+*   **Pros**: Maintains Cartesia's streaming WebSocket latency (~150ms TTFAB) across all languages and uses a single TTS vendor.
+*   **Cons**: Latin transliteration leads to flat prosody, incorrect syllable stress, and severe pronunciation errors on Indian administrative terms and numbers.
+*   **Reason for Rejection**: `Rejected by author: Transliterated Latin phonetics result in unnatural, Americanized speech on Hindi vocabulary. Edge-TTS neural voices (hi-IN-SwaraNeural) provide native pronunciation and natural prosody at the acceptable trade-off of ~300ms additional TTFAB.`
 
-### Alternative 3: Heavyweight ONNX / Torch Local Router
-*   **Description**: Bundle a local embedding transformer (such as `all-MiniLM-L6-v2`) via `onnxruntime` or `torch`.
-*   **Pros**: High semantic generalization.
-*   **Cons**: Adds 100MB–400MB to container size, adds heavy C-extensions, and takes 15ms–35ms per query on CPU.
-*   **Reason for Rejection**: `Rejected by author: Pure Python sparse n-gram centroids provide <0.5ms inference with zero dependencies.`
+### Alternative C: Browser-Native Web Speech API (Client-Side STT/TTS)
+*   **Mechanism**: Offload speech recognition and voice synthesis to the browser's built-in `webkitSpeechRecognition` and `speechSynthesis` APIs.
+*   **Pros**: Zero cloud API cost for STT and TTS; uses locally installed operating system voices.
+*   **Cons**: Highly inconsistent across browsers (Safari and Firefox lack full support). Does not provide access to raw audio buffers, preventing unified 24kHz PCM streaming, server-side barge-in detection, and real-time audio visualization.
+*   **Reason for Rejection**: `Rejected by author: Browser implementations are non-standard across platforms, lack raw PCM streaming hooks, and prevent the server from coordinating barge-in cancellation and unified audio visualization.`
+
+--------------------------------------------------------------------------------
+
+## Non-Functional Requirements
+
+### Performance & Latency Budgets
+*   **English Voice Turns**: Time-to-First-Audio-Byte (TTFAB) must remain under 700ms using Deepgram `nova-2` and Cartesia Sonic.
+*   **Hindi Voice Turns**: TTFAB must remain under 1000ms using Deepgram `nova-2` (`language=hi`) and Microsoft Edge-TTS (`hi-IN-SwaraNeural`).
+*   **Unicode Regex Overhead**: Character inspection on the initial sentence buffer must execute in `<0.2ms` on CPU.
+
+### Reliability & Graceful Fallback
+*   If Deepgram `language=hi` fails to connect or returns an error, the adapter must log the error and fall back to `language=en-US`.
+*   If Cartesia credentials are not set or the socket disconnects, the system must immediately route synthesis to Edge-TTS (`en-US-JennyNeural` or `hi-IN-SwaraNeural`) without dropping the client turn.
 
 --------------------------------------------------------------------------------
 
 ## Detailed Implementation Plan
 
-### 1. Affected Codebase Artifacts & File Mapping
+### Target Files to Create/Modify
 
-| File Path | Action | Description & Technical Rationale |
-| :--- | :--- | :--- |
-| [`app/interfaces/adapters.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/interfaces/adapters.py) | Modify | Adds `QueryIntent` enum (`LOCAL_SCHEME_FAQ`, `REALTIME_TEMPORAL`, `OUT_OF_DOMAIN`) and defines `SemanticRouterProtocol` (`def classify_intent(self, query: str) -> QueryIntent`). Retains existing `WebSearchProtocol`. |
-| [`app/core/config.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/core/config.py) | Modify | Adds CRAG thresholds and router configuration: `CRAG_HIGH_THRESHOLD: float = 0.82`, `CRAG_LOW_THRESHOLD: float = 0.55`, `SEMANTIC_ROUTER_ENABLED: bool = True`. Retains existing Tavily configurations. |
-| [`app/adapters/semantic_router.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/semantic_router.py) | Create | Implements in-process, pure Python sparse n-gram centroid router (OATS, arXiv:2603.13426) executing in `<0.5ms` on CPU with exemplar centroid vectors for `LOCAL_SCHEME_FAQ`, `REALTIME_TEMPORAL`, and `OUT_OF_DOMAIN`. |
-| [`app/adapters/search_tavily.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/search_tavily.py) | Retain / Verify | Existing baseline implementation providing basic search depth, direct answer parsing, and 4.0s timeout resilience. Ensure graceful handling of `asyncio.CancelledError`. |
-| [`app/services/voice_orchestrator.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/services/voice_orchestrator.py) | Modify | Injects `router: Optional[SemanticRouterProtocol] = None` in `__init__`. Implements speculative concurrent retrieval (`asyncio.create_task`), CRAG tri-state evaluation, non-blocking cancellation, and lifecycle milestone logging (`ROUTER_CLASSIFY_COMPLETE`, `SPECULATIVE_SEARCH_DISPATCHED`, `SPECULATIVE_SEARCH_CANCELLED`). |
-| [`app/main.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/main.py) | Modify | Instantiates `SemanticRouterAdapter` when `SEMANTIC_ROUTER_ENABLED=True`, injects it into `VoiceRAGOrchestrator(..., router=router_adapter)`, and adds `"semantic_router_enabled"` to `GET /health`. |
-| [`tests/test_search_tavily.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/tests/test_search_tavily.py) | Retain / Verify | Existing 5 tests covering key validation, payload parsing, timeout resilience, HTTP errors, and live search. |
-| [`tests/test_semantic_router.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/tests/test_semantic_router.py) | Create | New unit tests verifying `<0.5ms` classification latency, exact intent mapping for temporal, welfare, and out-of-domain queries, and empty query safety. |
-| [`tests/test_voice_pipeline.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/tests/test_voice_pipeline.py) | Modify | Adds tests verifying CRAG tri-state branches (`CORRECT` bypass, `AMBIGUOUS` merge, `INCORRECT` local suppression) and speculative task cancellation. |
+#### 1. `app/core/config.py` (Modify)
+*   **Type / Scope**: Backend Configuration
+*   **Proposed Changes**:
+    *   Add `DEFAULT_LANGUAGE: str = "auto"` to set default speech recognition and synthesis language mode.
+    *   Add `EDGE_TTS_INDIC_VOICE: str = "hi-IN-SwaraNeural"` (female primary) and `EDGE_TTS_INDIC_VOICE_MALE: str = "hi-IN-MadhurNeural"`.
+    *   Add `DEEPGRAM_LANGUAGE_MODELS: dict[str, str]` mapping language keys (`"en"`, `"hi"`, `"auto"`) to their query parameters (`"language=en-US&model=nova-2"`, `"language=hi&model=nova-2"`, `"detect_language=true&model=nova-2"`).
+*   **Rationale**: Centralizes configurable language identifiers, endpoints, and fallback constants in the application environment schema.
 
-### 2. Concrete Data Structures and Code Specifications
+#### 2. `app/adapters/stt_deepgram.py` (Modify)
+*   **Type / Scope**: Audio Input Adapter
+*   **Proposed Changes**:
+    *   Update `start_stream(self, language: str = "auto")` signature to accept language selection.
+    *   Dynamically format the WebSocket connection URL query string with the corresponding language parameter.
+    *   Add `reconnect_with_language(self, new_language: str)` method to allow clean session-level socket recreation when the client changes language mid-session.
+*   **Rationale**: Deepgram streaming WebSockets bind language configuration at connection time; dynamic re-parameterization allows runtime language changes without dropping client connections.
 
-#### A. Interface Contract (`app/interfaces/adapters.py`)
-```python
-from enum import Enum
-from typing import Protocol
+#### 3. `app/adapters/semantic_router.py` (Modify)
+*   **Type / Scope**: Intent Classification Engine
+*   **Proposed Changes**:
+    *   Expand `_SCHEME_KEYWORDS` with Devanagari roots (`योजना`, `पात्रता`, `आवेदन`, `लाभार्थी`, `पेंशन`, `सब्सिडी`, `दस्तावेज`, `राशन`, `कार्ड`) and Hinglish equivalents (`yojana`, `patrata`, `aavedan`, `labharthi`, `pension`, `subsidy`, `dastavez`, `ration`).
+    *   Expand `_TEMPORAL_KEYWORDS` with Devanagari roots (`आज`, `ताज़ा`, `समाचार`, `मौसम`, `कल`, `स्कोर`, `दाम`, `भाव`, `खबर`) and Hinglish equivalents (`aaj`, `taaza`, `samachar`, `mausam`, `kal`, `khabar`, `bhav`).
+    *   Apply Unicode NFKC normalization in `classify()` to ensure canonical comparison across Devanagari ligature variants.
+*   **Rationale**: Prevents semantic routing classification failures when Hindi queries are transcribed into Devanagari or Latin transliteration.
 
-class QueryIntent(str, Enum):
-    LOCAL_SCHEME_FAQ = "local_scheme_faq"
-    REALTIME_TEMPORAL = "realtime_temporal"
-    OUT_OF_DOMAIN = "out_of_domain"
+#### 4. `app/adapters/llm_groq.py` (Modify)
+*   **Type / Scope**: LLM Inference Engine
+*   **Proposed Changes**:
+    *   Update `SYSTEM_PROMPT` in `GroqLLMAdapter` to incorporate strict language-mirroring rules:
+        *   Respond in conversational Hindi (Devanagari script) when addressed in Hindi or Hinglish.
+        *   Respond in standard English when addressed in English.
+        *   Spell out numbers and currency in spoken Hindi or plain Arabic digits to prevent phonetic synthesis errors.
+        *   Maintain voice-turn conciseness (strictly under 35 words).
+*   **Rationale**: Directs the LLM to generate phonetically sound Devanagari script for Indic speech turns without requiring an external translation layer.
 
-class SemanticRouterProtocol(Protocol):
-    def classify_intent(self, query: str) -> QueryIntent:
-        """Classifies query intent into routing categories in <1ms."""
-        ...
-```
+#### 5. `app/core/orchestrator.py` (Modify)
+*   **Type / Scope**: Pipeline Orchestration Engine
+*   **Proposed Changes**:
+    *   Add `session_language: str = "auto"` attribute to `VoiceOrchestrator`.
+    *   In `handle_websocket_message()`, parse JSON control frames matching `{"event": "SET_LANGUAGE", "language": "<val>"}` and invoke `stt_adapter.reconnect_with_language()`.
+    *   Implement script-based TTS routing in the token consumption loop:
+        *   Inspect completed sentences with regex `re.search(r'[\u0900-\u097F]', sentence_text)`.
+        *   If Devanagari is detected, route sentence to `EdgeTTSAdapter` using `EDGE_TTS_INDIC_VOICE`.
+        *   If ASCII Latin is detected, route sentence to `CartesiaTTSAdapter` with English Sonic voice.
+    *   Standardize all synthesized audio output chunks to 24kHz 16-bit linear PCM before dispatching to WebSocket send lock.
+*   **Rationale**: Coordinates end-to-end language context and arbitrates between low-latency Cartesia English and high-accuracy Edge-TTS Indic synthesis.
 
-#### B. Semantic Router Implementation (`app/adapters/semantic_router.py`)
-```python
-import math
-import re
-from typing import Dict, List, Set
-from app.interfaces.adapters import QueryIntent
+#### 6. `app/static/index.html` (Modify)
+*   **Type / Scope**: Frontend Web Interface
+*   **Proposed Changes**:
+    *   Add `<select id="languageSelect">` in header controls with options: `English`, `हिन्दी (Hindi)`, `Auto-Detect`.
+    *   Add `onchange` listener that emits `{ "event": "SET_LANGUAGE", "language": this.value }` across the active WebSocket.
+    *   Add active language badge to telemetry status bar.
+*   **Rationale**: Gives users explicit control over spoken language and transparently surfaces the active session language state.
 
-class SemanticRouterAdapter:
-    """
-    In-process, zero-external-dependency semantic router using sparse
-    character & word n-gram prototype centroids (OATS methodology).
-    Runs on CPU in <0.5ms with deterministic routing behavior.
-    """
-    def __init__(self, temporal_threshold: float = 0.30, local_threshold: float = 0.25):
-        self.temporal_threshold = temporal_threshold
-        self.local_threshold = local_threshold
-        self._centroids: Dict[QueryIntent, Dict[str, float]] = self._build_centroids()
+#### 7. `tests/test_multilingual.py` (Create)
+*   **Type / Scope**: Automated Test Suite
+*   **Proposed Changes**:
+    *   `test_deepgram_url_language_formatting`: Verifies URL generation across `en`, `hi`, and `auto` modes.
+    *   `test_semantic_router_devanagari_intent`: Validates that Devanagari queries (`"पीएम किसान योजना की पात्रता क्या है?"`) route to `LOCAL_SCHEME_FAQ` in `<0.5ms`.
+    *   `test_semantic_router_hinglish_temporal`: Validates that Hinglish queries (`"Aaj Delhi ka mausam kaisa hai?"`) route to `REALTIME_TEMPORAL`.
+    *   `test_script_detection_tts_routing`: Asserts that sentences containing Devanagari characters trigger the Indic Edge-TTS route and Latin sentences trigger Cartesia.
+    *   `test_set_language_control_frame`: Asserts that `SET_LANGUAGE` updates session state and propagates to the STT adapter.
+*   **Rationale**: Ensures 100% test coverage and regression protection for all multilingual pipeline additions.
 
-    def _tokenize(self, text: str) -> Dict[str, float]:
-        tokens = re.findall(r'\b\w+\b', text.lower())
-        vec: Dict[str, float] = {}
-        for t in tokens:
-            vec[t] = vec.get(t, 0.0) + 1.0
-        # Normalization
-        norm = math.sqrt(sum(v * v for v in vec.values())) or 1.0
-        return {k: v / norm for k, v in vec.items()}
+### Verification Plan
 
-    def _cosine_similarity(self, v1: Dict[str, float], v2: Dict[str, float]) -> float:
-        intersection = set(v1.keys()) & set(v2.keys())
-        return sum(v1[k] * v2[k] for k in intersection)
+*   **Syntax & Static Typing**:
+    ```bash
+    python -m py_compile app/core/config.py app/adapters/stt_deepgram.py app/adapters/semantic_router.py app/adapters/llm_groq.py app/core/orchestrator.py
+    ```
+*   **Automated Unit Tests**:
+    ```bash
+    ../.venv/bin/pytest tests/test_multilingual.py -v
+    ```
+*   **Full Regression Suite**:
+    ```bash
+    ../.venv/bin/pytest tests/test_semantic_router.py tests/test_voice_pipeline.py tests/test_search_tavily.py tests/test_session_memory.py -v
+    ```
+*   **End-to-End Synthetic Streaming Turn**:
+    ```bash
+    ../.venv/bin/python client_stream.py --say "प्रधानमंत्री आवास योजना की पात्रता क्या है?" --no-play
+    ```
+    Verify:
+    1. STT captures query.
+    2. Semantic router outputs `LOCAL_SCHEME_FAQ`.
+    3. LLM returns Devanagari Hindi text.
+    4. Orchestrator routes to `hi-IN-SwaraNeural`.
+    5. TTFAB is recorded under 1000ms.
 
-    def classify_intent(self, query: str) -> QueryIntent:
-        if not query or not query.strip():
-            return QueryIntent.OUT_OF_DOMAIN
-        q_vec = self._tokenize(query)
-        sim_temporal = self._cosine_similarity(q_vec, self._centroids[QueryIntent.REALTIME_TEMPORAL])
-        sim_local = self._cosine_similarity(q_vec, self._centroids[QueryIntent.LOCAL_SCHEME_FAQ])
+--------------------------------------------------------------------------------
 
-        if sim_temporal >= self.temporal_threshold:
-            return QueryIntent.REALTIME_TEMPORAL
-        if sim_local >= self.local_threshold:
-            return QueryIntent.LOCAL_SCHEME_FAQ
-        return QueryIntent.OUT_OF_DOMAIN
-```
-
-#### C. Orchestrator Speculative Concurrency & CRAG Control Flow (`app/services/voice_orchestrator.py`)
-```python
-# 1. Intent Classification
-intent = (
-    self.router.classify_intent(search_query)
-    if self.router
-    else (QueryIntent.REALTIME_TEMPORAL if self._has_temporal_regex(search_query) else QueryIntent.LOCAL_SCHEME_FAQ)
-)
-tracker.log_step("ROUTER_CLASSIFY_COMPLETE", {"intent": intent.value})
-
-# 2. Speculative Dispatch
-search_task: Optional[asyncio.Task] = None
-if intent == QueryIntent.REALTIME_TEMPORAL and self.search:
-    tracker.log_step("SPECULATIVE_SEARCH_DISPATCHED", {"query": search_query})
-    search_task = asyncio.create_task(self.search.search(query=search_query, max_results=2))
-
-# 3. Local Vector Retrieval
-docs = await self.vdb.hybrid_search(query=search_query, top_k=2)
-top_score = max([d.score for d in docs], default=0.0)
-
-# 4. CRAG Tri-State Arbitration
-if top_score >= settings.CRAG_HIGH_THRESHOLD:  # CORRECT (>= 0.82)
-    if search_task and not search_task.done():
-        search_task.cancel()
-        tracker.log_step("SPECULATIVE_SEARCH_CANCELLED", {"reason": "high_local_confidence", "score": top_score})
-elif top_score < settings.CRAG_LOW_THRESHOLD:  # INCORRECT (< 0.55)
-    if not search_task and self.search:
-        search_task = asyncio.create_task(self.search.search(query=search_query, max_results=2))
-    web_docs = (await search_task) if search_task else []
-    docs = web_docs  # Suppress irrelevant local docs
-else:  # AMBIGUOUS (0.55 <= score < 0.82)
-    if not search_task and self.search:
-        search_task = asyncio.create_task(self.search.search(query=search_query, max_results=2))
-    web_docs = (await search_task) if search_task else []
-    docs = web_docs + docs  # Merge context
-```
-
-### 3. Execution Sequencing & Checkpoints
-
-1. **Phase 1: Interfaces & Configuration**
-   - Update `app/interfaces/adapters.py` with `QueryIntent` and `SemanticRouterProtocol`.
-   - Update `app/core/config.py` with CRAG thresholds and `SEMANTIC_ROUTER_ENABLED`.
-   - *Checkpoint*: `pytest tests/test_adapters.py` passes cleanly.
-2. **Phase 2: Semantic Router Implementation & Tests**
-   - Implement `app/adapters/semantic_router.py`.
-   - Write comprehensive unit tests in `tests/test_semantic_router.py`.
-   - *Checkpoint*: `pytest tests/test_semantic_router.py` passes with `<1ms` execution assertions.
-3. **Phase 3: Orchestrator Integration & Concurrency Management**
-   - Update `app/services/voice_orchestrator.py` to wire `self.router`, speculative concurrent fetching, CRAG tri-state evaluation, and task cancellation.
-   - Update `app/main.py` to instantiate and inject the router.
-   - *Checkpoint*: `pytest tests/test_voice_pipeline.py` passes all CRAG and speculative milestones.
-4. **Phase 4: Full Test Suite Verification & Benchmarks**
-   - Run complete test suite (`pytest tests/`) ensuring all tests pass without regressions.
+*Drafted with EGM*

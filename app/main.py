@@ -36,6 +36,9 @@ def create_app() -> FastAPI:
         tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_VOICE)
         tts_provider_name = "edge-tts"
 
+    # Always instantiate Indic Edge-TTS adapter for native Hindi synthesis
+    indic_tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_TTS_INDIC_VOICE)
+
     llm_adapter = GroqLLMAdapter(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
     vdb_adapter = QdrantVectorStoreAdapter(
         url=settings.QDRANT_URL,
@@ -62,6 +65,7 @@ def create_app() -> FastAPI:
         tts=tts_adapter,
         search=search_adapter,
         router=router_adapter,
+        indic_tts=indic_tts_adapter,
     )
 
     voice_router = get_voice_router(orchestrator)
@@ -85,6 +89,8 @@ def create_app() -> FastAPI:
             "service": "sahayak-voice-assistant",
             "tts_provider": tts_provider_name,
             "voice": settings.CARTESIA_VOICE_ID if settings.CARTESIA_API_KEY else settings.EDGE_VOICE,
+            "indic_tts_voice": settings.EDGE_TTS_INDIC_VOICE,
+            "default_language": settings.DEFAULT_LANGUAGE,
             "llm_model": settings.GROQ_MODEL,
             "vector_db": settings.QDRANT_URL,
             "web_search_enabled": bool(settings.TAVILY_API_KEY and settings.WEB_SEARCH_ENABLED),

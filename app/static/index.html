@@ -146,6 +146,33 @@
       50% { opacity: 0.4; transform: scale(0.85); }
     }
 
+    .lang-selector-wrap {
+      display: flex;
+      align-items: center;
+    }
+
+    .lang-select {
+      background: rgba(15, 23, 42, 0.85);
+      color: #e2e8f0;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .lang-select:hover {
+      border-color: var(--cyan-glow);
+    }
+
+    .lang-select:focus {
+      border-color: var(--cyan-glow);
+      box-shadow: 0 0 8px rgba(6, 182, 212, 0.3);
+    }
+
     /* Main Grid Layout */
     .app-container {
       flex: 1;
@@ -760,6 +787,13 @@
         <div class="status-dot"></div>
         <span>Connected</span>
       </div>
+      <div class="lang-selector-wrap">
+        <select id="languageSelect" class="lang-select" onchange="changeLanguage(this.value)" title="Language Selection (Deepgram Multilingual STT & Indic TTS)">
+          <option value="auto">🌐 Auto-Detect</option>
+          <option value="hi">🇮🇳 हिन्दी (Hindi)</option>
+          <option value="en">🇬🇧 English</option>
+        </select>
+      </div>
     </div>
   </header>
 
@@ -1064,6 +1098,10 @@
         state.isConnected = true;
         document.getElementById("wsStatus").innerHTML = '<div class="status-dot"></div><span>Connected</span>';
         document.getElementById("wsStatus").style.color = "var(--emerald-accent)";
+        const langVal = document.getElementById("languageSelect")?.value;
+        if (langVal && langVal !== "auto") {
+          state.ws.send(JSON.stringify({ event: "SET_LANGUAGE", language: langVal }));
+        }
       };
 
       state.ws.onclose = () => {
@@ -1120,6 +1158,12 @@
       } else if (eventType === "SESSION_RESET") {
         document.getElementById("sessionHistorySnippet").innerText = "Session memory wiped clean.";
         document.getElementById("sessionTurnCount").innerText = "0 Turns";
+      } else if (eventType === "LANGUAGE_CHANGED") {
+        const langSelect = document.getElementById("languageSelect");
+        if (langSelect && msg.language) {
+          langSelect.value = msg.language;
+        }
+        console.log("[SERVER] Language switched to:", msg.language);
       }
     }
 
@@ -1330,6 +1374,15 @@
     function resetSession() {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
       state.ws.send(JSON.stringify({ event: "RESET_SESSION" }));
+    }
+
+    function changeLanguage(lang) {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        console.warn("WebSocket not connected; cannot change language yet");
+        return;
+      }
+      state.ws.send(JSON.stringify({ event: "SET_LANGUAGE", language: lang }));
+      console.log("[CLIENT] Sent SET_LANGUAGE:", lang);
     }
 
     /* =========================================================================

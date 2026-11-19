@@ -14,10 +14,21 @@ PRONOUNS = {
     "they", "them", "their", "theirs",
     "he", "him", "his", "she", "her", "hers",
     "its", "itself", "themselves",
+    # Hindi demonstrative & third-person pronouns
+    "यह", "वह", "ये", "वे",
+    "इसका", "उसका", "इनका", "उनका",
+    "इसे", "उसे", "इन्हें", "उन्हें",
+    "इसमें", "उसमें",
+    # Hinglish pronouns
+    "iska", "uska", "inke", "unke", "isse", "usse",
 }
 
 QUESTION_STARTERS = {
-    "who", "what", "where", "when", "why", "how", "which"
+    "who", "what", "where", "when", "why", "how", "which",
+    # Hindi question starters
+    "कौन", "क्या", "कहाँ", "कब", "क्यों", "कैसे", "किसे", "किसका",
+    # Hinglish question starters
+    "kaun", "kya", "kahan", "kab", "kyun", "kaise", "kisko",
 }
 
 @dataclass

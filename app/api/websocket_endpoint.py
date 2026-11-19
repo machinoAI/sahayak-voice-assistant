@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
 from app.services.session_memory import SessionMemory
 from app.core.logger import logger
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -23,7 +24,8 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
 
         # Initialize live STT stream session if supported by the adapter
         stt_session_factory = getattr(orchestrator.stt, "create_stream_session", None)
-        session = stt_session_factory() if stt_session_factory else None
+        current_language = getattr(orchestrator, "session_language", settings.DEFAULT_LANGUAGE)
+        session = stt_session_factory(language=current_language) if stt_session_factory else None
         if session:
             try:
                 await session.start()
@@ -95,6 +97,37 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                         elif event_type == "RESET_SESSION":
                             session_memory.clear()
                             await orchestrator._send_safe_json(websocket, {"event": "SESSION_RESET"})
+                        elif event_type == "SET_LANGUAGE":
+                            new_lang = str(event.get("language", "auto")).strip().lower()
+                            logger.info(f"[WS Voice] Language switch requested: '{new_lang}'")
+                            if hasattr(orchestrator, "session_language"):
+                                orchestrator.session_language = new_lang
+
+                            # Re-bind connection-scoped STT session with new language
+                            if stt_listener_task and not stt_listener_task.done():
+                                stt_listener_task.cancel()
+                                try:
+                                    await stt_listener_task
+                                except asyncio.CancelledError:
+                                    pass
+
+                            if session:
+                                await session.close()
+                                session = None
+
+                            if stt_session_factory:
+                                try:
+                                    session = stt_session_factory(language=new_lang)
+                                    if session:
+                                        await session.start()
+                                        stt_listener_task = asyncio.create_task(stt_event_listener())
+                                except Exception as e:
+                                    logger.error(f"[WS Voice] Failed to rebind STT session with language '{new_lang}': {e}")
+
+                            await orchestrator._send_safe_json(websocket, {
+                                "event": "LANGUAGE_CHANGED",
+                                "language": new_lang,
+                            })
                         elif event_type == "FINAL_TRANSCRIPT":
                             transcript = event.get("text", "").strip()
                             if transcript:

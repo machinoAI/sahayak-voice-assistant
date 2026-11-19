@@ -29,7 +29,7 @@ from app.services.session_memory import SessionMemory
 ABBREVIATIONS = {
     "mr.", "mrs.", "ms.", "dr.", "prof.", "e.g.", "i.e.", "rs.", "vs.", "approx."
 }
-RAW_DELIMITER_REGEX = re.compile(r'([^.!?\n]+[.!?\n]+)')
+RAW_DELIMITER_REGEX = re.compile(r'([^.!?\n\u0964\u0965]+[.!?\n\u0964\u0965]+)')
 
 def extract_next_sentence(buffer: str) -> Tuple[Optional[str], str]:
     """
@@ -66,13 +66,16 @@ class VoiceRAGOrchestrator:
         tts: TTSClientProtocol,
         search: Optional[WebSearchProtocol] = None,
         router: Optional[SemanticRouterProtocol] = None,
+        indic_tts: Optional[TTSClientProtocol] = None,
     ) -> None:
         self.stt = stt
         self.vdb = vdb
         self.llm = llm
         self.tts = tts
+        self.indic_tts = indic_tts
         self.search = search
         self.router = router
+        self.session_language: str = settings.DEFAULT_LANGUAGE
         self._ws_lock = asyncio.Lock()
         self.active_generation_task: Optional[asyncio.Task] = None
         self.active_tts_task: Optional[asyncio.Task] = None
@@ -167,7 +170,13 @@ class VoiceRAGOrchestrator:
                 )
 
                 try:
-                    async for audio_chunk in self.tts.synthesize_stream(sentence):
+                    has_devanagari = bool(re.search(r'[\u0900-\u097F]', sentence))
+                    active_tts = (
+                        self.indic_tts
+                        if (self.indic_tts and (has_devanagari or self.session_language == "hi"))
+                        else self.tts
+                    )
+                    async for audio_chunk in active_tts.synthesize_stream(sentence):
                         if not first_audio_packet_sent:
                             first_audio_packet_sent = True
                             ttfab_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
@@ -522,9 +531,13 @@ class VoiceRAGOrchestrator:
 
             # 2. Voice-first system prompt with rolling conversation history
             system_prompt = (
-                "You are Sahayak, a voice assistant. "
-                "Answer using ONLY the provided context in 1-2 spoken sentences. "
-                "Never use lists, markdown, asterisks, or URLs. Speak naturally."
+                "You are Sahayak, an AI voice assistant serving citizens in India.\n"
+                "Language Guidelines:\n"
+                "1. If the user asks in Hindi or Hinglish, answer strictly in clear, natural Hindi written in Devanagari script.\n"
+                "2. If the user asks in English, answer in standard English.\n"
+                "3. Keep spoken responses concise (strictly 1 to 2 spoken sentences, under 35 words) for rapid speech delivery.\n"
+                "4. Answer using ONLY the provided context. If context is missing, be brief and direct.\n"
+                "5. Never output markdown formatting, bullet points, asterisks, URLs, or lists. Speak naturally."
             )
             history_block = (
                 session_memory.format_history_for_prompt()

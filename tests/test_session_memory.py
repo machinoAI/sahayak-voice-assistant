@@ -43,6 +43,14 @@ def test_pronoun_heuristic_query_augmentation():
     q4 = memory.get_augmented_query("What is the capital of India?")
     assert q4 == "What is the capital of India?"
 
+    # 5. Hindi query with pronoun "इसकी" / "इसमें" -> Augmented
+    q5 = memory.get_augmented_query("इसमें कौन से दस्तावेज चाहिए?")
+    assert q5 == "What is Ayushman Bharat? इसमें कौन से दस्तावेज चाहिए?"
+
+    # 6. Hinglish query with pronoun "iska" -> Augmented
+    q6 = memory.get_augmented_query("iska benefit kya hai?")
+    assert q6 == "What is Ayushman Bharat? iska benefit kya hai?"
+
 def test_prompt_history_formatting():
     """Verify that dialogue turns are correctly formatted for LLM system prompt."""
     memory = SessionMemory(max_turns=3)
