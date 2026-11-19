@@ -74,3 +74,49 @@ def test_semantic_router_boundary_and_empty_queries():
     assert router.classify_intent("") == QueryIntent.OUT_OF_DOMAIN
     assert router.classify_intent("   ") == QueryIntent.OUT_OF_DOMAIN
     assert router.classify_intent("??? !!! ...") == QueryIntent.OUT_OF_DOMAIN
+
+def test_semantic_router_multilingual_indic_intent():
+    """Verify that Devanagari Hindi and Hinglish queries route accurately."""
+    router = SemanticRouterAdapter()
+
+    # Devanagari local scheme queries
+    hindi_scheme_queries = [
+        "पीएम किसान योजना के लिए आवेदन कैसे करें?",
+        "आयुष्मान भारत कार्ड की पात्रता क्या है",
+        "राशन कार्ड बनवाने के लिए कौन से दस्तावेज चाहिए?",
+        "प्रधानमंत्री आवास योजना की सब्सिडी",
+    ]
+    for q in hindi_scheme_queries:
+        intent = router.classify_intent(q)
+        assert intent == QueryIntent.LOCAL_SCHEME_FAQ, f"Hindi query '{q}' mapped to {intent}, expected LOCAL_SCHEME_FAQ"
+
+    # Hinglish local scheme queries
+    hinglish_scheme_queries = [
+        "pm kisan yojana me aavedan kaise kare",
+        "ayushman card ki patrata kya hai",
+        "ration card documents list",
+    ]
+    for q in hinglish_scheme_queries:
+        intent = router.classify_intent(q)
+        assert intent == QueryIntent.LOCAL_SCHEME_FAQ, f"Hinglish query '{q}' mapped to {intent}, expected LOCAL_SCHEME_FAQ"
+
+    # Devanagari temporal queries
+    hindi_temporal_queries = [
+        "आज का ताजा समाचार क्या है?",
+        "दिल्ली में आज का मौसम कैसा है",
+        "लाइव क्रिकेट स्कोर अपडेट",
+        "आज सोने और चांदी का भाव",
+    ]
+    for q in hindi_temporal_queries:
+        intent = router.classify_intent(q)
+        assert intent == QueryIntent.REALTIME_TEMPORAL, f"Hindi query '{q}' mapped to {intent}, expected REALTIME_TEMPORAL"
+
+    # Hinglish temporal queries
+    hinglish_temporal_queries = [
+        "aaj ka taaza samachar kya hai",
+        "aaj delhi ka mausam kaisa hai",
+        "live cricket match score",
+    ]
+    for q in hinglish_temporal_queries:
+        intent = router.classify_intent(q)
+        assert intent == QueryIntent.REALTIME_TEMPORAL, f"Hinglish query '{q}' mapped to {intent}, expected REALTIME_TEMPORAL"

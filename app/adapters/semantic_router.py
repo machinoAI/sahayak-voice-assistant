@@ -6,6 +6,7 @@ Executes on CPU in <0.5ms with deterministic routing behavior.
 
 import math
 import re
+import unicodedata
 from typing import Dict, List, Set, Tuple
 from app.interfaces.adapters import QueryIntent, SemanticRouterProtocol
 
@@ -31,6 +32,20 @@ class SemanticRouterAdapter(SemanticRouterProtocol):
         "election voting results live update",
         "weather temperature today",
         "latest updates now",
+        # Devanagari Hindi temporal exemplars
+        "आज का ताजा समाचार क्या है",
+        "दिल्ली में आज का मौसम कैसा है",
+        "लाइव क्रिकेट स्कोर अपडेट",
+        "आज सोने और चांदी का भाव क्या है",
+        "पेट्रोल और डीजल का आज का दाम",
+        "आज की बड़ी खबरें",
+        "कल क्या हुआ था समाचार",
+        # Hinglish temporal exemplars
+        "aaj ka taaza samachar kya hai",
+        "aaj delhi ka mausam kaisa hai",
+        "live cricket match score kya hai",
+        "petrol diesel ka aaj ka rate",
+        "aaj ki latest khabar batao",
     ]
 
     DEFAULT_LOCAL_SCHEME_SEED: List[str] = [
@@ -46,6 +61,24 @@ class SemanticRouterAdapter(SemanticRouterProtocol):
         "government welfare benefits for rural farmers",
         "how to download aadhar card online",
         "schemes for pregnant women and children",
+        # Devanagari Hindi local scheme exemplars
+        "पीएम किसान योजना के लिए आवेदन कैसे करें",
+        "आयुष्मान भारत कार्ड की पात्रता क्या है",
+        "राशन कार्ड बनवाने के लिए कौन से दस्तावेज चाहिए",
+        "वरिष्ठ नागरिकों के लिए सरकारी पेंशन योजना",
+        "प्रधानमंत्री आवास योजना की सब्सिडी और स्थिति",
+        "ई श्रम कार्ड कैसे बनाएं",
+        "सुकन्या समृद्धि योजना के लाभ और नियम",
+        "सहायक क्या है और यह क्या मदद करता है",
+        "आधार कार्ड ऑनलाइन कैसे डाउनलोड करें",
+        "महिलाओं और बच्चों के लिए सरकारी योजनाएं",
+        # Hinglish local scheme exemplars
+        "pm kisan yojana me aavedan kaise kare",
+        "ayushman card ki patrata kya hai",
+        "ration card ke liye kya documents chahiye",
+        "pradhan mantri awas yojana subsidy status",
+        "sahayak kya hai aur kaise kaam karta hai",
+        "aadhar card download kaise kare",
     ]
 
     DEFAULT_OUT_OF_DOMAIN_SEED: List[str] = [
@@ -59,12 +92,23 @@ class SemanticRouterAdapter(SemanticRouterProtocol):
         "write a python function to sort a list",
         "history of the french revolution",
         "who wrote the play romeo and juliet",
+        # Hindi & Hinglish out-of-domain exemplars
+        "पृथ्वी और चंद्रमा के बीच की दूरी कितनी है",
+        "टेलीफोन का आविष्कार किसने किया था",
+        "कंप्यूटर कैसे काम करता है समझाइए",
+        "roti kaise banate hain recipe",
+        "duniya ka sabse bada janwar kaun sa hai",
     ]
+
+    STOP_WORDS: Set[str] = {
+        "का", "के", "की", "और", "है", "हैं", "में", "से", "को", "पर", "था", "थी", "थे", "क्या",
+        "the", "is", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "it", "what",
+    }
 
     def __init__(
         self,
-        temporal_threshold: float = 0.28,
-        local_threshold: float = 0.24,
+        temporal_threshold: float = 0.12,
+        local_threshold: float = 0.12,
     ) -> None:
         self.temporal_threshold = temporal_threshold
         self.local_threshold = local_threshold
@@ -74,20 +118,26 @@ class SemanticRouterAdapter(SemanticRouterProtocol):
     def _extract_features(self, text: str) -> Dict[str, float]:
         """Extracts word unigrams and character 3-grams with L2 normalization."""
         features: Dict[str, float] = {}
-        cleaned = re.sub(r"[^\w\s]", " ", text.lower())
+        normalized = unicodedata.normalize("NFKC", text or "")
+        cleaned = re.sub(r"[^\w\s]", " ", normalized.lower())
         words = cleaned.split()
 
         # Word unigrams
         for w in words:
+            if w in self.STOP_WORDS:
+                continue
             if len(w) > 1:
                 features[f"w:{w}"] = features.get(f"w:{w}", 0.0) + 1.0
 
         # Character 3-grams (for inflection & typo resilience)
         for w in words:
-            padded = f"_{w}_"
-            for i in range(len(padded) - 2):
-                ngram = padded[i : i + 3]
-                features[f"c:{ngram}"] = features.get(f"c:{ngram}", 0.0) + 0.5
+            if w in self.STOP_WORDS:
+                continue
+            if len(w) >= 3:
+                padded = f"_{w}_"
+                for i in range(len(padded) - 2):
+                    ngram = padded[i : i + 3]
+                    features[f"c:{ngram}"] = features.get(f"c:{ngram}", 0.0) + 0.5
 
         # L2 Unit Normalization
         norm = math.sqrt(sum(v * v for v in features.values())) or 1.0
