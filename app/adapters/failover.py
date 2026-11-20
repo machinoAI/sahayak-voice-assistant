@@ -24,6 +24,9 @@ class FailoverLLMAdapter:
         self.cooldown_seconds = cooldown_seconds
         # provider_name -> unix timestamp until which it is suspended
         self.cooldowns: Dict[str, float] = {}
+        self.active_provider: Optional[str] = None
+        self.active_model: Optional[str] = None
+        self.failover_occurred: bool = False
 
     @property
     def model(self) -> str:
@@ -92,12 +95,15 @@ class FailoverLLMAdapter:
         accumulated_text = ""
         current_prompt = prompt
 
-        for name, adapter in self.adapters:
+        for idx, (name, adapter) in enumerate(self.adapters):
             if self._is_cooling_down(name):
                 logger.info(f"[FAILOVER-LLM] Skipping '{name}' (in cooldown).")
                 continue
 
             try:
+                self.active_provider = name
+                self.active_model = getattr(adapter, "model", name)
+                self.failover_occurred = (idx > 0)
                 logger.info(f"[FAILOVER-LLM] Attempting generation with '{name}' (model: {adapter.model}).")
                 async for token in adapter.stream_tokens(current_prompt, system_prompt=system_prompt):
                     accumulated_text += token

@@ -259,12 +259,21 @@ class VoiceRAGOrchestrator:
                         if not first_audio_packet_sent:
                             first_audio_packet_sent = True
                             ttfab_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
-                            tracker.log_step(
-                                "TTS_FIRST_AUDIO_PACKET",
-                                {"ttfab_ms": ttfab_ms},
-                            )
+                            active_tts_name = getattr(active_tts, "active_turn_provider", None)
+                            if not active_tts_name and hasattr(active_tts, "adapters") and active_tts.adapters:
+                                active_tts_name = active_tts.adapters[0][0]
+                            if not active_tts_name:
+                                active_tts_name = getattr(active_tts, "provider", active_tts.__class__.__name__)
+                            tts_failover = getattr(active_tts, "failover_occurred", False)
+
+                            packet_data = {
+                                "ttfab_ms": ttfab_ms,
+                                "provider": active_tts_name,
+                                "failover": tts_failover,
+                            }
+                            tracker.log_step("TTS_FIRST_AUDIO_PACKET", packet_data)
                             await self._broadcast_step(
-                                websocket, tracker, "TTS_FIRST_AUDIO_PACKET", {"ttfab_ms": ttfab_ms}, lock=lock
+                                websocket, tracker, "TTS_FIRST_AUDIO_PACKET", packet_data, lock=lock
                             )
                         total_audio_bytes += len(audio_chunk)
                         await self._send_safe_bytes(websocket, audio_chunk, lock=lock)
@@ -301,7 +310,25 @@ class VoiceRAGOrchestrator:
         else:
             self.current_tracker = tracker
 
-        tracker.log_step("TURN_INITIATED", {"transcript": final_transcript, "length": len(final_transcript)})
+        stt_name = "deepgram"
+        if context and context.stt_adapter:
+            stt_name = getattr(context.stt_adapter, "provider", context.stt_adapter.__class__.__name__)
+        llm_init_name = getattr(active_llm, "active_provider", None)
+        if not llm_init_name and hasattr(active_llm, "adapters") and active_llm.adapters:
+            llm_init_name = active_llm.adapters[0][0]
+        if not llm_init_name:
+            llm_init_name = getattr(active_llm, "provider", active_llm.__class__.__name__)
+
+        turn_init_meta = {
+            "transcript": final_transcript,
+            "length": len(final_transcript),
+            "stt": stt_name,
+            "llm": llm_init_name,
+        }
+        tracker.log_step("TURN_INITIATED", turn_init_meta)
+        await self._broadcast_step(
+            websocket, tracker, "TURN_INITIATED", turn_init_meta, lock=lock
+        )
 
         curr_task = asyncio.current_task()
         if context:
@@ -675,10 +702,22 @@ class VoiceRAGOrchestrator:
                 prompt = f"{system_prompt}\nContext:\n{context_text}\nUser Question: {final_transcript}"
 
             # 3. LLM Token Stream -> Sentence Boundary Splitter -> Queue Producer
-            model_name = getattr(active_llm, "model", "default")
-            tracker.log_step("LLM_STREAM_START", {"model": model_name})
+            model_name = getattr(active_llm, "active_model", None) or getattr(active_llm, "model", "default")
+            provider_name = getattr(active_llm, "active_provider", None) or getattr(active_llm, "provider", None)
+            if not provider_name and hasattr(active_llm, "adapters") and active_llm.adapters:
+                provider_name = active_llm.adapters[0][0]
+            if not provider_name:
+                provider_name = active_llm.__class__.__name__
+
+            llm_failover = getattr(active_llm, "failover_occurred", False)
+            llm_step_data = {
+                "model": model_name,
+                "provider": provider_name,
+                "failover": llm_failover,
+            }
+            tracker.log_step("LLM_STREAM_START", llm_step_data)
             await self._broadcast_step(
-                websocket, tracker, "LLM_STREAM_START", {"model": model_name}, lock=lock
+                websocket, tracker, "LLM_STREAM_START", llm_step_data, lock=lock
             )
             sentence_buffer = ""
             token_count = 0
@@ -689,11 +728,17 @@ class VoiceRAGOrchestrator:
                 if not first_token_received:
                     first_token_received = True
                     ttft_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
-                    tracker.log_step(
-                        "LLM_FIRST_TOKEN",
-                        {"ttft_ms": ttft_ms},
-                    )
-                    await self._broadcast_step(websocket, tracker, "LLM_FIRST_TOKEN", {"ttft_ms": ttft_ms}, lock=lock)
+                    actual_provider = getattr(active_llm, "active_provider", provider_name)
+                    actual_model = getattr(active_llm, "active_model", model_name)
+                    actual_failover = getattr(active_llm, "failover_occurred", False)
+                    first_tok_data = {
+                        "ttft_ms": ttft_ms,
+                        "provider": actual_provider,
+                        "model": actual_model,
+                        "failover": actual_failover,
+                    }
+                    tracker.log_step("LLM_FIRST_TOKEN", first_tok_data)
+                    await self._broadcast_step(websocket, tracker, "LLM_FIRST_TOKEN", first_tok_data, lock=lock)
 
                 token_count += 1
                 collected_tokens.append(token)

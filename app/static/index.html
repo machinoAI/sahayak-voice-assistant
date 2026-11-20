@@ -173,6 +173,40 @@
       box-shadow: 0 0 8px rgba(6, 182, 212, 0.3);
     }
 
+    .profile-pill-group {
+      display: flex;
+      gap: 3px;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 8px;
+      padding: 2px 4px;
+    }
+
+    .profile-pill {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 7px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .profile-pill:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .profile-pill.active {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--cyan-glow);
+      box-shadow: 0 0 6px rgba(56, 189, 248, 0.25);
+    }
+
     /* Main Grid Layout */
     .app-container {
       flex: 1;
@@ -788,6 +822,11 @@
         <span>Connected</span>
       </div>
       <div class="lang-selector-wrap" style="display:flex; gap:6px; align-items:center;">
+        <div class="profile-pill-group" title="Quick Architecture Profiles (Cloud vs Local vs Indic)">
+          <button class="profile-pill active" id="pillProfileCloud" onclick="applyProfile('cloud')" title="Cloud High-Performance: Deepgram + Groq + Cartesia">⚡ Cloud</button>
+          <button class="profile-pill" id="pillProfileLocal" onclick="applyProfile('local')" title="Zero-Cost Local: Local Whisper + Ollama + Edge-TTS">💻 Local</button>
+          <button class="profile-pill" id="pillProfileIndic" onclick="applyProfile('indic')" title="Indic Multilingual: Sarvam ASR + Gemini Flash + Edge-TTS Indic">🇮🇳 Indic</button>
+        </div>
         <select id="sttSelect" class="lang-select" onchange="changeProvider()" title="Speech-to-Text Provider">
           <option value="deepgram">🎙️ Deepgram Nova-2</option>
           <option value="sarvam">🎙️ Sarvam Indic ASR</option>
@@ -937,6 +976,17 @@
           <span class="panel-badge" id="toolCountBadge">0 Calls</span>
         </div>
         <div class="panel-content">
+          <!-- STT Engine Card -->
+          <div class="tool-card" id="cardStt">
+            <div class="tool-header-row">
+              <span class="tool-name">
+                <span>🎙️</span> Speech-to-Text Engine
+              </span>
+              <span class="tool-badge badge-ok" id="badgeSttProvider">Deepgram Nova-2</span>
+            </div>
+            <div class="tool-snippet" id="snippetStt">16kHz Linear PCM • Ready for audio input</div>
+          </div>
+
           <!-- Router Tool Card -->
           <div class="tool-card" id="cardRouter">
             <div class="tool-header-row">
@@ -1028,9 +1078,23 @@
           <div class="panel-title">
             <span>⚡</span> LLM Stream & Voice Output
           </div>
-          <span class="panel-badge" id="llmModelBadge">Groq</span>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <span class="panel-badge" id="llmModelBadge" style="color:var(--cyan-glow); background:rgba(56,189,248,0.12);">Groq LPU</span>
+            <span class="panel-badge" id="ttsModelBadge" style="color:var(--emerald-accent); background:rgba(16,185,129,0.12);">Cartesia Sonic</span>
+          </div>
         </div>
         <div class="panel-content">
+          <!-- Failover Alert Card (Dynamic) -->
+          <div class="tool-card" id="cardFailoverAlert" style="display:none; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08);">
+            <div class="tool-header-row">
+              <span class="tool-name" style="color: var(--amber-accent);">
+                <span>⚡</span> Provider Failover Active
+              </span>
+              <span class="tool-badge badge-warn" id="badgeFailoverStatus">Active</span>
+            </div>
+            <div class="tool-snippet" id="snippetFailover" style="color: #fef08a;">Automatic fallback engaged with zero-downtime continuation.</div>
+          </div>
+
           <div class="stream-terminal" id="tokenStreamBox">
             <span id="tokenStreamText">Assistant streaming response will appear here in real-time...</span>
             <span class="token-cursor" id="tokenCursor" style="display: none;"></span>
@@ -1103,7 +1167,163 @@
       currentAudioSource: null,
       micGainNode: null,
       analyser: null,
+      activeSttProvider: "deepgram",
+      activeLlmProvider: "groq",
+      activeTtsProvider: "cartesia",
+      activeLanguage: "auto",
+      activeSttLabel: "Deepgram Nova-2",
+      activeLlmLabel: "Groq LPU",
+      activeTtsLabel: "Cartesia Sonic",
+      activeLlmModel: "llama-3.3-70b-versatile",
+      activeTtsEngine: "Cartesia Sonic",
+      llmFailoverActive: false,
+      ttsFailoverActive: false,
     };
+
+    const PROVIDER_NAMES = {
+      stt: {
+        deepgram: "Deepgram Nova-2",
+        sarvam: "Sarvam Indic ASR",
+        local: "Local Whisper",
+        whisper: "Local Whisper",
+      },
+      llm: {
+        groq: "Groq LPU",
+        gemini: "Gemini Flash",
+        openai: "OpenAI GPT-4o",
+        anthropic: "Claude 3.5 Haiku",
+        claude: "Claude 3.5 Haiku",
+        ollama: "Ollama (Local)",
+      },
+      tts: {
+        cartesia: "Cartesia Sonic",
+        edge: "Edge-TTS (Free)",
+        elevenlabs: "ElevenLabs Turbo",
+      }
+    };
+
+    function updateProviderLabels() {
+      state.activeSttLabel = PROVIDER_NAMES.stt[state.activeSttProvider] || state.activeSttProvider;
+      state.activeLlmLabel = PROVIDER_NAMES.llm[state.activeLlmProvider] || state.activeLlmProvider;
+      state.activeTtsLabel = PROVIDER_NAMES.tts[state.activeTtsProvider] || state.activeTtsProvider;
+
+      // Update Inspector Badges
+      const sttBadge = document.getElementById("badgeSttProvider");
+      if (sttBadge) sttBadge.innerText = state.activeSttLabel;
+
+      const llmBadge = document.getElementById("llmModelBadge");
+      if (llmBadge) {
+        llmBadge.innerText = state.activeLlmModel ? `${state.activeLlmLabel} / ${state.activeLlmModel}` : state.activeLlmLabel;
+        if (state.llmFailoverActive) {
+          llmBadge.style.color = "var(--amber-accent)";
+          llmBadge.style.background = "rgba(245, 158, 11, 0.18)";
+        } else {
+          llmBadge.style.color = "var(--cyan-glow)";
+          llmBadge.style.background = "rgba(56, 189, 248, 0.12)";
+        }
+      }
+
+      const ttsBadge = document.getElementById("ttsModelBadge");
+      if (ttsBadge) {
+        ttsBadge.innerText = state.activeTtsLabel;
+        if (state.ttsFailoverActive) {
+          ttsBadge.style.color = "var(--amber-accent)";
+          ttsBadge.style.background = "rgba(245, 158, 11, 0.18)";
+        } else {
+          ttsBadge.style.color = "var(--emerald-accent)";
+          ttsBadge.style.background = "rgba(16, 185, 129, 0.12)";
+        }
+      }
+
+      // Failover Alert Box
+      const failoverBox = document.getElementById("cardFailoverAlert");
+      if (failoverBox) {
+        if (state.llmFailoverActive || state.ttsFailoverActive) {
+          failoverBox.style.display = "flex";
+          const failoverSources = [];
+          if (state.llmFailoverActive) failoverSources.push(`LLM: ${state.activeLlmLabel}`);
+          if (state.ttsFailoverActive) failoverSources.push(`TTS: ${state.activeTtsLabel}`);
+          document.getElementById("snippetFailover").innerText = 
+            `Failover active for ${failoverSources.join(", ")}. Continuation engaged with zero audio dropouts.`;
+        } else {
+          failoverBox.style.display = "none";
+        }
+      }
+
+      // STT Card details
+      const snippetStt = document.getElementById("snippetStt");
+      if (snippetStt) {
+        snippetStt.innerText = `Engine: ${state.activeSttLabel} • 16kHz Linear PCM • Lang: ${(state.activeLanguage || "auto").toUpperCase()}`;
+      }
+
+      // Profile pills active state
+      updateProfilePills();
+    }
+
+    function applyProfile(profileName) {
+      let stt = "deepgram", llm = "groq", tts = "cartesia", lang = "auto";
+      if (profileName === "local") {
+        stt = "local";
+        llm = "ollama";
+        tts = "edge";
+        lang = "auto";
+      } else if (profileName === "indic") {
+        stt = "sarvam";
+        llm = "gemini";
+        tts = "edge";
+        lang = "hi";
+      }
+
+      const sttEl = document.getElementById("sttSelect");
+      const llmEl = document.getElementById("llmSelect");
+      const ttsEl = document.getElementById("ttsSelect");
+      const langEl = document.getElementById("languageSelect");
+
+      if (sttEl) sttEl.value = stt;
+      if (llmEl) llmEl.value = llm;
+      if (ttsEl) ttsEl.value = tts;
+      if (langEl) langEl.value = lang;
+
+      state.activeSttProvider = stt;
+      state.activeLlmProvider = llm;
+      state.activeTtsProvider = tts;
+      state.activeLanguage = lang;
+      updateProviderLabels();
+
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({
+          event: "SET_PROVIDER",
+          stt: stt,
+          llm: llm,
+          tts: tts,
+        }));
+        state.ws.send(JSON.stringify({
+          event: "SET_LANGUAGE",
+          language: lang,
+        }));
+      } else {
+        connectWebSocket();
+      }
+    }
+
+    function updateProfilePills() {
+      const pCloud = document.getElementById("pillProfileCloud");
+      const pLocal = document.getElementById("pillProfileLocal");
+      const pIndic = document.getElementById("pillProfileIndic");
+      if (!pCloud || !pLocal || !pIndic) return;
+
+      pCloud.classList.remove("active");
+      pLocal.classList.remove("active");
+      pIndic.classList.remove("active");
+
+      if (state.activeSttProvider === "local" && state.activeLlmProvider === "ollama" && state.activeTtsProvider === "edge") {
+        pLocal.classList.add("active");
+      } else if (state.activeSttProvider === "sarvam" || state.activeLanguage === "hi") {
+        pIndic.classList.add("active");
+      } else if (state.activeSttProvider === "deepgram" && state.activeLlmProvider === "groq" && state.activeTtsProvider === "cartesia") {
+        pCloud.classList.add("active");
+      }
+    }
 
     function connectWebSocket() {
       const loc = window.location;
@@ -1152,6 +1372,7 @@
     }
 
     connectWebSocket();
+    updateProviderLabels();
 
     /* =========================================================================
        2. SERVER EVENT DISPATCHER
@@ -1182,11 +1403,27 @@
         if (langSelect && msg.language) {
           langSelect.value = msg.language;
         }
+        state.activeLanguage = msg.language || state.activeLanguage;
+        updateProviderLabels();
         console.log("[SERVER] Language switched to:", msg.language);
       } else if (eventType === "PROVIDER_CHANGED") {
-        if (msg.stt && document.getElementById("sttSelect")) document.getElementById("sttSelect").value = msg.stt;
-        if (msg.llm && document.getElementById("llmSelect")) document.getElementById("llmSelect").value = msg.llm;
-        if (msg.tts && document.getElementById("ttsSelect")) document.getElementById("ttsSelect").value = msg.tts;
+        if (msg.stt) {
+          state.activeSttProvider = msg.stt;
+          if (document.getElementById("sttSelect")) document.getElementById("sttSelect").value = msg.stt;
+        }
+        if (msg.llm) {
+          state.activeLlmProvider = msg.llm;
+          if (document.getElementById("llmSelect")) document.getElementById("llmSelect").value = msg.llm;
+        }
+        if (msg.tts) {
+          state.activeTtsProvider = msg.tts;
+          if (document.getElementById("ttsSelect")) document.getElementById("ttsSelect").value = msg.tts;
+        }
+        if (msg.language) {
+          state.activeLanguage = msg.language;
+          if (document.getElementById("languageSelect")) document.getElementById("languageSelect").value = msg.language;
+        }
+        updateProviderLabels();
         console.log("[SERVER] Providers changed to:", msg);
       }
     }
@@ -1233,6 +1470,12 @@
     function handlePipelineStep(step, data, elapsedMs) {
       if (step === "TURN_INITIATED") {
         state.queryText = data.transcript || state.queryText;
+        if (data.stt) state.activeSttProvider = data.stt;
+        if (data.llm) state.activeLlmProvider = data.llm;
+        if (data.tts) state.activeTtsProvider = data.tts;
+        state.llmFailoverActive = false;
+        state.ttsFailoverActive = false;
+        updateProviderLabels();
         if (data.augmented && data.augmented_query) {
           document.getElementById("sessionHistorySnippet").innerText = `Augmented Query: "${data.augmented_query}"`;
         }
@@ -1309,12 +1552,24 @@
           webPreview += `Web Source: ${state.webDocs[0].text}`;
         }
         document.getElementById("snippetTavily").innerText = webPreview;
+      } else if (step === "LLM_STREAM_START") {
+        if (data.model) state.activeLlmModel = data.model;
+        if (data.provider) state.activeLlmProvider = data.provider;
+        if (data.failover !== undefined) state.llmFailoverActive = data.failover;
+        updateProviderLabels();
       } else if (step === "LLM_FIRST_TOKEN") {
         state.ttft = data.ttft_ms;
         document.getElementById("topTtftMs").innerText = `${data.ttft_ms}ms`;
+        if (data.model) state.activeLlmModel = data.model;
+        if (data.provider) state.activeLlmProvider = data.provider;
+        if (data.failover !== undefined) state.llmFailoverActive = data.failover;
+        updateProviderLabels();
       } else if (step === "TTS_FIRST_AUDIO_PACKET") {
         state.ttfab = data.ttfab_ms;
         document.getElementById("topTtfabMs").innerText = `${data.ttfab_ms}ms`;
+        if (data.provider) state.activeTtsProvider = data.provider;
+        if (data.failover !== undefined) state.ttsFailoverActive = data.failover;
+        updateProviderLabels();
       } else if (step === "TURN_COMPLETED_SUCCESS") {
         state.totalTurnMs = data.total_turn_ms;
         document.getElementById("topTotalMs").innerText = `${data.total_turn_ms}ms`;
@@ -1356,11 +1611,12 @@
 
     function updateLatencyBreakdown() {
       const text = 
-        `• Classification: ${state.routerLatency || 0.1}ms\n` +
-        `• Vector Retrieval: ${state.vdbLatency || '--'}ms\n` +
-        `• Tavily Speculative: ${state.speculativeSearchCancelled ? 'Cancelled (0ms wait)' : (state.webSearchComplete ? 'Resolved' : 'N/A')}\n` +
-        `• LLM TTFT: ${state.ttft || '--'}ms\n` +
-        `• TTS TTFAB: ${state.ttfab || '--'}ms\n` +
+        `• STT Engine: ${state.activeSttLabel || 'Deepgram'}\n` +
+        `• Classification: ${state.routerLatency || 0.1}ms (${state.routerIntent || 'IDLE'})\n` +
+        `• Vector Retrieval: ${state.vdbLatency || '--'}ms (Score: ${state.vdbScore ? state.vdbScore.toFixed(2) : '--'})\n` +
+        `• Tavily Speculative: ${state.speculativeSearchCancelled ? 'Cancelled (Pruned)' : (state.webSearchComplete ? 'Resolved' : 'N/A')}\n` +
+        `• LLM (${state.activeLlmLabel}): TTFT ${state.ttft || '--'}ms ${state.llmFailoverActive ? '⚡(Failover)' : ''}\n` +
+        `• TTS (${state.activeTtsLabel}): TTFAB ${state.ttfab || '--'}ms ${state.ttsFailoverActive ? '⚡(Failover)' : ''}\n` +
         `• Total End-to-End: ${state.totalTurnMs || '--'}ms`;
       document.getElementById("latencyBreakdownSnippet").innerText = text;
     }
@@ -1417,8 +1673,12 @@
     }
 
     function changeLanguage(lang) {
+      state.activeLanguage = lang;
+      updateProviderLabels();
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket not connected; cannot change language yet");
+        console.warn("WebSocket not connected; reconnecting with new language...");
+        connectWebSocket();
+    updateProviderLabels();
         return;
       }
       state.ws.send(JSON.stringify({ event: "SET_LANGUAGE", language: lang }));
@@ -1426,14 +1686,19 @@
     }
 
     function changeProvider() {
+      const stt = document.getElementById("sttSelect")?.value;
+      const llm = document.getElementById("llmSelect")?.value;
+      const tts = document.getElementById("ttsSelect")?.value;
+      if (stt) state.activeSttProvider = stt;
+      if (llm) state.activeLlmProvider = llm;
+      if (tts) state.activeTtsProvider = tts;
+      updateProviderLabels();
+
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
         console.warn("WebSocket not connected; reconnecting with new selection...");
         connectWebSocket();
         return;
       }
-      const stt = document.getElementById("sttSelect")?.value;
-      const llm = document.getElementById("llmSelect")?.value;
-      const tts = document.getElementById("ttsSelect")?.value;
       state.ws.send(JSON.stringify({
         event: "SET_PROVIDER",
         stt: stt,
@@ -1930,10 +2195,10 @@
         // 3 Primary Architecture Trajectories (driven by live backend routing & CRAG)
         { id: "tavily_search", dy: -0.04, dx: 0.94, type: "tavily", label: "Tavily Web Search API" },
         { id: "qdrant_rag", dy: 0.05, dx: 0.88, type: "qdrant", label: "Qdrant Vector Hybrid RAG" },
-        { id: "direct_llm", dy: 0.12, dx: 0.84, type: "llm", label: "Direct Parametric LLM (Groq)" },
+        { id: "direct_llm", dy: 0.12, dx: 0.84, type: "llm", label: `Direct LLM (${state.activeLlmLabel || "Groq"})` },
 
         // 3 Lower Arcs
-        { id: "alt_dn_1", dy: 0.20, dx: 0.76, type: "ambient", label: "Draft: Multilingual Hindi" },
+        { id: "alt_dn_1", dy: 0.20, dx: 0.76, type: "ambient", label: state.isPlayingAudio ? `Voice Synthesis (${state.activeTtsLabel})` : "Draft: Multilingual Indic" },
         { id: "alt_dn_2", dy: 0.30, dx: 0.80, type: "ambient", label: "Draft: Structured Summary" },
         { id: "alt_dn_3", dy: 0.40, dx: 0.78, type: "ambient", label: "Draft: Follow-up Exploration" },
       ];
@@ -1972,13 +2237,15 @@
 
       // C. Direct LLM / Greeting Status
       let llmStatus = "speculative";
-      let llmSubtitle = "Parametric generation";
+      let llmSubtitle = `Parametric ${state.activeLlmLabel || "LLM"}`;
       if (state.routerIntent === "GREETING" || state.routerIntent === "DIRECT_LLM") {
         llmStatus = "committed";
-        llmSubtitle = `Committed: Direct ${state.routerIntent}`;
+        llmSubtitle = `Committed: Direct ${state.routerIntent} via ${state.activeLlmLabel || "LLM"}`;
       } else if (state.tokens.length > 0) {
         llmStatus = "active";
-        llmSubtitle = `Streaming: ${state.tokens.length} tokens (TTFT: ${state.ttft || '--'}ms)`;
+        const modelNote = state.activeLlmModel ? ` [${state.activeLlmModel}]` : "";
+        const failoverNote = state.llmFailoverActive ? " ⚡Failover" : "";
+        llmSubtitle = `${state.activeLlmLabel}${modelNote}${failoverNote}: ${state.tokens.length} tok (TTFT: ${state.ttft || '--'}ms)`;
       }
 
       // 4. Render all 10 trajectory splines
@@ -2175,34 +2442,51 @@
        VIEW 2: PIPELINE ARCHITECTURE DAG (Multi-Stage Node Flow)
        ------------------------------------------------------------------------- */
     function drawPipelineArchitectureDag(w, h) {
-      const rootX = 60;
+      const sttX = 35;
+      const sttY = h * 0.5;
+
+      const rootX = Math.min(230, w * 0.22);
       const rootY = h * 0.5;
 
-      const routerX = Math.min(380, w * 0.35);
+      const routerX = Math.min(430, w * 0.41);
       const routerY = rootY - (h * 0.28);
 
-      const qdrantX = Math.min(380, w * 0.35);
+      const qdrantX = Math.min(430, w * 0.41);
       const qdrantY = rootY - (h * 0.09);
 
-      const tavilyX = Math.min(380, w * 0.35);
+      const tavilyX = Math.min(430, w * 0.41);
       const tavilyY = rootY + (h * 0.22);
 
-      const cragX = Math.min(620, w * 0.58);
+      const cragX = Math.min(650, w * 0.61);
       const cragY = rootY;
 
-      const llmX = Math.min(840, w * 0.78);
+      const llmX = Math.min(860, w * 0.80);
       const llmY = rootY - (h * 0.08);
 
-      const ttsX = Math.min(1040, w * 0.94);
+      const ttsX = Math.min(1060, w * 0.95);
       const ttsY = rootY + (h * 0.1);
 
-      // Root Query Label
+      // Stage 0: STT Audio Input -> Root Query
+      const sttActive = state.isRecording || Boolean(state.interimText);
+      const sttColor = sttActive ? "#38bdf8" : "rgba(100, 116, 139, 0.45)";
+      drawBezierSpline(sttX + 50, sttY, rootX, rootY, sttColor, sttActive);
+      if (sttActive) {
+        drawParticleAlongSpline(sttX + 50, sttY, rootX, rootY, animPhase, "#38bdf8");
+      }
+      drawNode(
+        sttX, sttY,
+        `STT: ${state.activeSttLabel || "Deepgram"}`,
+        state.isRecording ? "Listening (16kHz PCM)..." : (state.interimText ? "Streaming ASR..." : "Audio Input Ready"),
+        sttActive ? "active" : "ok"
+      );
+
+      // Root Query Node
       ctx.save();
-      ctx.font = "bold 13px " + getComputedStyle(document.body).fontFamily;
+      ctx.font = "bold 12px " + getComputedStyle(document.body).fontFamily;
       ctx.fillStyle = "#ffffff";
-      ctx.textAlign = "right";
-      const qText = state.queryText ? `"${state.queryText.slice(0, 22)}${state.queryText.length > 22 ? '...' : ''}"` : "User Query";
-      ctx.fillText(qText, rootX - 14, rootY + 4);
+      ctx.textAlign = "center";
+      const qText = state.queryText ? `"${state.queryText.slice(0, 18)}${state.queryText.length > 18 ? '...' : ''}"` : "User Query";
+      ctx.fillText(qText, rootX, rootY - 14);
 
       // Root circle
       ctx.fillStyle = "#38bdf8";
@@ -2284,31 +2568,35 @@
         cragActive ? (state.cragDecision === "CORRECT" ? "ok" : "active") : "idle"
       );
 
-      // CRAG -> Groq LLM
+      // CRAG -> LLM Engine
       const llmActive = state.tokens.length > 0;
-      const llmColor = llmActive ? "#38bdf8" : "rgba(100, 116, 139, 0.35)";
+      const llmColor = state.llmFailoverActive ? "#f59e0b" : (llmActive ? "#38bdf8" : "rgba(100, 116, 139, 0.35)");
       drawBezierSpline(cragX + 80, cragY, llmX, llmY, llmColor, llmActive);
       if (llmActive) {
-        drawParticleAlongSpline(cragX + 80, cragY, llmX, llmY, animPhase, "#38bdf8");
+        drawParticleAlongSpline(cragX + 80, cragY, llmX, llmY, animPhase, llmColor);
       }
+      const llmTitle = `${state.activeLlmLabel || "LLM Engine"}${state.llmFailoverActive ? " ⚡Failover" : ""}`;
+      const llmSubtitle = state.ttft ? `TTFT: ${state.ttft}ms (${state.tokens.length} tok)` : (state.activeLlmModel || "Streaming tokens...");
       drawNode(
         llmX, llmY, 
-        "Groq LLM Stream", 
-        state.ttft ? `TTFT: ${state.ttft}ms (${state.tokens.length} tokens)` : "Streaming tokens...",
-        llmActive ? "active" : "idle"
+        llmTitle, 
+        llmSubtitle,
+        llmActive ? (state.llmFailoverActive ? "merged" : "active") : "idle"
       );
 
-      // LLM -> TTS Audio Output
+      // LLM -> TTS Voice Output
       const ttsActive = state.audioChunksReceived > 0;
-      const ttsColor = ttsActive ? "#10b981" : "rgba(100, 116, 139, 0.35)";
+      const ttsColor = state.ttsFailoverActive ? "#f59e0b" : (ttsActive ? "#10b981" : "rgba(100, 116, 139, 0.35)");
       drawBezierSpline(llmX + 60, llmY, ttsX, ttsY, ttsColor, ttsActive);
       if (ttsActive) {
-        drawParticleAlongSpline(llmX + 60, llmY, ttsX, ttsY, (animPhase + 0.4) % 1, "#10b981");
+        drawParticleAlongSpline(llmX + 60, llmY, ttsX, ttsY, (animPhase + 0.4) % 1, ttsColor);
       }
+      const ttsTitle = `${state.activeTtsLabel || "TTS Voice Output"}${state.ttsFailoverActive ? " ⚡Failover" : ""}`;
+      const ttsSubtitle = state.ttfab ? `TTFAB: ${state.ttfab}ms (${state.audioChunksReceived} chunks)` : "Synthesizing voice...";
       drawNode(
         ttsX, ttsY, 
-        "TTS Streaming Audio", 
-        state.ttfab ? `TTFAB: ${state.ttfab}ms (${state.audioChunksReceived} chunks)` : "Synthesizing voice...",
+        ttsTitle, 
+        ttsSubtitle,
         ttsActive ? "ok" : "idle"
       );
     }

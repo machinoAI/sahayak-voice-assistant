@@ -185,6 +185,14 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                 logger.error(f"[WS Voice] Failed to start STT session: {e}")
                 stt_stream = None
 
+        # Record active provider keys on session context
+        active_stt_id = stt_param or ("local" if settings.VOICE_PROFILE == "local" else settings.ACTIVE_STT_PROVIDER)
+        active_llm_id = llm_param or ("ollama" if settings.VOICE_PROFILE == "local" else settings.ACTIVE_LLM_PROVIDER)
+        active_tts_id = tts_param or ("edge" if settings.VOICE_PROFILE == "local" else (settings.ACTIVE_TTS_PROVIDER or settings.TTS_PROVIDER))
+        setattr(context, "_active_stt_name", active_stt_id)
+        setattr(context, "_active_llm_name", active_llm_id)
+        setattr(context, "_active_tts_name", active_tts_id)
+
         try:
             while True:
                 message = await websocket.receive()
@@ -223,20 +231,23 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                             new_stt = event.get("stt")
                             new_llm = event.get("llm")
                             new_tts = event.get("tts")
-                            changed = {}
                             if new_stt and validate_provider("stt", new_stt):
                                 context.stt_adapter = get_stt_adapter(new_stt, language=context.language)
+                                setattr(context, "_active_stt_name", new_stt)
                                 await rebind_stt(context.language)
-                                changed["stt"] = new_stt
                             if new_llm and validate_provider("llm", new_llm):
                                 context.llm_adapter = get_llm_adapter(new_llm)
-                                changed["llm"] = new_llm
+                                setattr(context, "_active_llm_name", new_llm)
                             if new_tts and validate_provider("tts", new_tts):
                                 context.tts_adapter = get_tts_adapter(new_tts)
-                                changed["tts"] = new_tts
+                                setattr(context, "_active_tts_name", new_tts)
+
                             await orchestrator._send_safe_json(websocket, {
                                 "event": "PROVIDER_CHANGED",
-                                **changed,
+                                "stt": getattr(context, "_active_stt_name", "deepgram"),
+                                "llm": getattr(context, "_active_llm_name", "groq"),
+                                "tts": getattr(context, "_active_tts_name", "cartesia"),
+                                "language": context.language,
                             }, lock=context.ws_lock)
                         elif event_type == "FINAL_TRANSCRIPT":
                             transcript = event.get("text", "").strip()

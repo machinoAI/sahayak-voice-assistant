@@ -25,10 +25,12 @@ class FailoverTTSAdapter:
         self.cooldowns: Dict[str, float] = {}
         # Stickiness for the current conversational turn
         self.active_turn_provider: Optional[str] = None
+        self.failover_occurred: bool = False
 
     def reset_turn(self) -> None:
         """Resets turn stickiness boundary at the end of a conversational turn."""
         self.active_turn_provider = None
+        self.failover_occurred = False
 
     def _is_cooling_down(self, provider_name: str) -> bool:
         expiry = self.cooldowns.get(provider_name, 0.0)
@@ -72,6 +74,7 @@ class FailoverTTSAdapter:
                 if chunk_count > 0:
                     # Successfully synthesized; stick to this provider for the remainder of the turn
                     self.active_turn_provider = name
+                    self.failover_occurred = (name != self.adapters[0][0])
                     return
 
                 # If 0 chunks yielded without exception, consider it a failure
