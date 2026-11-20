@@ -41,6 +41,12 @@ $$\mathbf{C}_c = \frac{\sum_{s \in \mathcal{S}_c} \mathbf{v}_s}{\left\|\sum_{s \
 Because all centroid vectors and query vectors are pre-normalized to $\|\mathbf{v}\|_2 = 1$, the cosine similarity reduces to an inner product computed strictly over the intersection of non-zero indices:
 $$\text{Sim}(\mathbf{v}_q, \mathbf{C}_c) = \mathbf{v}_q \cdot \mathbf{C}_c = \sum_{k \in \text{supp}(\mathbf{v}_q) \cap \text{supp}(\mathbf{C}_c)} v_{q,k} \cdot C_{c,k}$$
 
+### E. Multilingual & Indic Transliteration Robustness
+Indian multilingual queries frequently exhibit phonetic and orthographic variability across spoken and written forms (e.g., *"kisan"*, *"kisaan"*, *"kisano"*, *"yojana"*, *"aavedan"*, *"aaj ka mausam"*, or Devanagari *"किसान सम्मान निधि"*).
+1. **Phonetic Invariance via Subword 3-Grams**: Character 3-grams ($\Phi_{\text{char}}$) provide natural fault-tolerance against transliteration inconsistencies and ASR spelling deviations without requiring neural cross-lingual models.
+2. **Native Unicode Devanagari Support**: Devanagari codepoints are parsed as first-class unicode characters, forming character trigrams that cluster cleanly into domain centroids.
+3. **Zero Latency Penalty**: Feature extraction operates on native Python strings without external tokenizers, preserving the $< 0.4\text{ms}$ execution latency across all supported languages.
+
 ---
 
 ## 3. Decision Arbitration Logic

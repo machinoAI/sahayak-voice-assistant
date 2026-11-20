@@ -16,6 +16,7 @@ The WebSocket endpoint manages bi-directional communication between client and s
 | :--- | :--- | :--- |
 | **`Binary PCM Audio`** | Raw bytes | 16kHz, 16-bit signed integer, mono PCM chunks (20ms = 640 bytes). Piped directly to Deepgram STT. |
 | **`FINAL_TRANSCRIPT`** | JSON | `{"event": "FINAL_TRANSCRIPT", "text": "..."}`. Manually submits a text query, bypassing microphone STT. |
+| **`SET_LANGUAGE`** | JSON | `{"event": "SET_LANGUAGE", "language": "hi" \| "en-IN" \| "en" \| "multi"}`. Switches Deepgram STT language and steers downstream prompt and TTS backend dynamically. |
 | **`USER_BARGE_IN`** | JSON | `{"event": "USER_BARGE_IN"}`. Immediately triggers server-side task cancellation and buffer flush. |
 | **`RESET_SESSION`** | JSON | `{"event": "RESET_SESSION"}`. Wipes the rolling multi-turn conversational memory. |
 
@@ -25,6 +26,7 @@ The WebSocket endpoint manages bi-directional communication between client and s
 | :--- | :--- | :--- |
 | **`INTERIM_TRANSCRIPT`** | JSON | `{"event": "INTERIM_TRANSCRIPT", "text": "..."}`. Live unfinalized speech hypothesis from Deepgram. |
 | **`FINAL_TRANSCRIPT`** | JSON | `{"event": "FINAL_TRANSCRIPT", "text": "..."}`. Speech endpoint finalized; triggers turn execution. |
+| **`LANGUAGE_CHANGED`** | JSON | `{"event": "LANGUAGE_CHANGED", "language": "hi", "stt_model": "nova-2", "tts_engine": "edge-tts"}`. Confirms active language and synthesis backend. |
 | **`PIPELINE_STEP`** | JSON | `{"event": "PIPELINE_STEP", "step": "...", "elapsed_ms": 12.4, "data": {...}}`. Millisecond-precision telemetry for each pipeline stage. |
 | **`LLM_TOKEN`** | JSON | `{"event": "LLM_TOKEN", "token": "...", "token_count": 14}`. Live streaming token off the Groq wire. |
 | **`CLEAR_AUDIO_BUFFER`** | JSON | `{"event": "CLEAR_AUDIO_BUFFER"}`. Commands client to immediately mute and discard pending audio packets. |
@@ -53,20 +55,33 @@ Rendered with high-DPI HTML5 Canvas 2D (`app/static/index.html`):
 
 ## 3. Web Audio API Engine
 
-1. **Microphone Capture**:
+1. **Microphone Capture & Zero-Gain Loopback Isolation**:
    - Prompts `navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } })`.
    - Uses `ScriptProcessorNode` (2048 samples = 128ms) to downsample Float32 audio into `Int16Array` linear PCM buffers.
+   - **Zero-Gain Loopback Prevention**: Modern browsers (Chrome, Edge, Safari) require `ScriptProcessorNode` to be connected downstream to an `AudioDestinationNode` for `onaudioprocess` events to continuously fire. Connecting directly routes raw microphone audio straight through the client's speakers, causing acoustic feedback loops that destroy STT transcription accuracy. Sahayak connects the processor through a `GainNode` with `gain.value = 0` before routing to `audioContext.destination`, ensuring continuous audio processing with complete speaker silence.
    - Streams binary frames to `/ws/voice`.
-2. **Audio Playback Engine**:
+
+2. **Audio Playback Engine & Source Lifecycle Tracking**:
    - Inspects incoming binary headers to auto-detect **raw PCM (`pcm_s16le`)** vs. **MP3 (`ID3` or `0xFF 0xFB`)**.
    - Raw PCM chunks are converted to Float32 `AudioBuffer` and queued into a gapless playback schedule.
+   - **Active Source Tracking (`stopAudioPlayback`)**: Every instantiated `AudioBufferSourceNode` is registered in `state.currentAudioSource`. When the user interrupts (`USER_BARGE_IN`), or when a new turn begins, `stopAudioPlayback()` immediately executes `source.stop()`, clears queued chunks, and resets `nextPlayTime = 0`.
    - Features a real-time oscilloscope visualizer canvas displaying the waveform amplitude of synthesized speech.
    - Flushes queued buffers instantly on `CLEAR_AUDIO_BUFFER`.
 
 ---
 
-## 4. One-Click Interactive Presets
+## 4. UI Controls & Interactive Presets
 
+### Dynamic Language Selector
+Located in the top navigation bar, the language dropdown allows one-click switching between:
+- **🌐 Hindi (हिन्दी)** (`hi`): Routes STT to Deepgram Hindi, prompts Groq in natural Devanagari Hindi/Hinglish, and synthesizes audio via Microsoft Edge-TTS (`hi-IN-SwaraNeural` / `hi-IN-MadhurNeural`).
+- **English (India)** (`en-IN`): Optimizes Deepgram STT for Indian English accents and synthesizes speech using Cartesia Sonic.
+- **English (Global)** (`en`): Standard English STT and Cartesia Sonic TTS.
+- **Multilingual** (`multi`): Enables auto-detection across code-mixed queries.
+
+Selecting a language immediately transmits a `SET_LANGUAGE` WebSocket frame, instantly reconfiguring server STT and TTS without terminating the WebSocket session or clearing conversational memory.
+
+### One-Click Interactive Presets
 Located directly above the input bar in the UI:
 
 | Preset Chip | Query | Purpose |

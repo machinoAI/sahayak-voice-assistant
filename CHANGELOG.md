@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-11-19 (Release: `v0.2.1-multi-turn-persistence`)
+
+### Fixed
+- **Consecutive Question Microphone Freeze & STT Session Persistence** (`app/adapters/stt_deepgram.py`, `app/api/websocket_endpoint.py`):
+  - Solved the upstream Deepgram 10–12 second inactivity timeout that silently dropped streaming WebSocket connections during conversational pauses.
+  - Implemented an autonomous `_keepalive_loop()` inside `DeepgramStreamSession` that transmits native `{"type": "KeepAlive"}` JSON control frames every 5.0 seconds during idle audio intervals, synchronized via `_send_lock`.
+  - Added robust connection liveness detection (`is_connected` property) supporting modern websockets `ClientConnection.state` (`State.OPEN` vs `State.CLOSED`) with legacy and mock fallback compatibility.
+  - Introduced lazy auto-reconnection (`ensure_stt_connected()`) in `app/api/websocket_endpoint.py` guarded by `stt_reconnect_lock = asyncio.Lock()` to prevent connection stampedes when incoming audio bursts arrive.
+  - Isolated `stt_event_listener` to cleanly exit on provider disconnects without crashing the client-facing WebSocket gateway.
+
+### Added
+- **Clean Turn Boundary Transitions** (`app/services/voice_orchestrator.py`):
+  - Implemented explicit cancellation and awaiting of both `active_generation_task` (LLM generation) and `active_tts_task` (TTS synthesis) when a new user turn initiates before previous turns fully wind down.
+  - Re-initialized `self.sentence_queue = asyncio.Queue()` per turn to eliminate cross-turn sentence leakage.
+- **Microphone Audio Graph Isolation** (`app/static/index.html`):
+  - Routed live microphone audio through a muted gain node (`GainNode.gain.value = 0`) before connecting to `AudioContext.destination`, completely eliminating acoustic loopback through device speakers while preserving continuous Web Audio frame pumping.
+  - Implemented `stopAudioPlayback()` to immediately stop active `AudioBufferSourceNode` playback and flush queues on turn initiation and barge-in.
+- **Regression Test Coverage**:
+  - Added `test_deepgram_keepalive_lifecycle` in `tests/test_adapters.py` testing keepalive dispatch, task cancellation, and connection liveness.
+  - Added `test_live_multi_turn_pause` in `tests/test_cli_client.py` validating consecutive turns over an 11-second conversational pause on a single WebSocket connection.
+
+---
+
+## [0.6.0] - 2026-11-19 (Release: `v0.2.0-indic-multilingual`)
+
+### Added
+- **Indic & Multilingual Speech Support** (`app/adapters/stt_deepgram.py`, `app/adapters/tts_cartesia.py`, `app/adapters/tts_edge.py`, `app/services/voice_orchestrator.py`):
+  - Dynamic language parameterization in Deepgram streaming STT supporting `en-IN` (Indian English), `hi` (Hindi), and `multi` (multilingual auto-detection).
+  - Dynamic per-session language re-binding via `SET_LANGUAGE` client WebSocket control frame with `LANGUAGE_CHANGED` acknowledgment.
+  - Groq LPU system prompt steering enforcing language mirroring: generating clear Devanagari Hindi for Hindi/Hinglish inputs and standard English for English inputs.
+  - Dual-tier neural TTS routing: ultra-low latency Cartesia Sonic English (`c45bc5ec-5968-4f0b-a898-92743eed0000`, ~180ms TTFAB) for English queries, and high-naturalness Microsoft Edge-TTS neural Indic voices (`hi-IN-SwaraNeural`, `hi-IN-MadhurNeural`, ~450ms TTFAB) for Devanagari Hindi queries.
+- **Multilingual Conversational Memory** (`app/services/session_memory.py`):
+  - Expanded pronoun query augmentation to recognize Indic demonstratives and honorifics (`यह`, `वह`, `इनका`, `उनका`, `इन्हें`, `उन्हें`, `इस`, `उस`).
+- **Client Language Controls** (`app/static/index.html`):
+  - Added a session language dropdown selector (`English`, `Hindi`, `Auto`) in the web UI header with real-time WebSocket state propagation.
+- **Multilingual Test Suite & Benchmarks**:
+  - Added `tests/test_multilingual.py` covering language parameterization, prompt steering, and Indic pronoun resolution.
+  - Added multi-language streaming test suite in `client_stream.py`.
+
+---
+
 ## [0.5.0] - 2026-11-12
 
 ### Added
