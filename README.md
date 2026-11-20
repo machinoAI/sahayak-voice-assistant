@@ -165,16 +165,28 @@ cp .env.example .env
 ```
 Populate your API keys:
 ```env
+# Primary Cloud Keys (or run in VOICE_PROFILE=local for zero-cost)
 DEEPGRAM_API_KEY=your_deepgram_api_key
 GROQ_API_KEY=your_groq_api_key
 CARTESIA_API_KEY=your_cartesia_api_key
 TAVILY_API_KEY=your_tavily_api_key
 
-# Optional settings (defaults shown)
-APP_HOST=0.0.0.0
-APP_PORT=8000
-QDRANT_STORAGE_PATH=./qdrant_storage
-VOICE_LANGUAGE=en-IN
+# Additional Providers (optional)
+GEMINI_API_KEY=your_gemini_api_key
+OPENAI_API_KEY=your_openai_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+SARVAM_API_KEY=your_sarvam_api_key
+
+# Profiles & Active Providers (defaults shown)
+VOICE_PROFILE=production        # 'production' or 'local'
+ACTIVE_STT_PROVIDER=deepgram    # deepgram | sarvam | whisper
+ACTIVE_LLM_PROVIDER=groq        # groq | gemini | openai | anthropic | ollama
+ACTIVE_TTS_PROVIDER=cartesia    # cartesia | elevenlabs | edge
+DEFAULT_LANGUAGE=auto           # auto | en | hi
+HOST=0.0.0.0
+PORT=8000
+QDRANT_PATH=qdrant_storage
 ```
 
 ### 4. Ingest Local Knowledge
