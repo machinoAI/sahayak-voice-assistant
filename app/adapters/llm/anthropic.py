@@ -71,8 +71,9 @@ class AnthropicClaudeAdapter:
                 "model": self._model,
                 "messages": messages,
                 "max_tokens": self.max_tokens,
-                "temperature": self.temperature,
             }
+            if self.temperature is not None:
+                kwargs["extra_body"] = {"temperature": self.temperature}
             if system_content:
                 kwargs["system"] = system_content
 

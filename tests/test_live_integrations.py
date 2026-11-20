@@ -144,16 +144,11 @@ def test_deepgram_live_streaming_transcription():
         pytest.skip("DEEPGRAM_API_KEY not configured")
 
     async def _run():
-        from app.adapters.tts_cartesia import CartesiaTTSAdapter
-        tts = CartesiaTTSAdapter()
+        from client_stream import generate_synthetic_audio
         test_phrase = "Hello Sahayak, what is the capital of India?"
 
-        print("\n[DEEPGRAM LIVE] Synthesizing reference audio with Cartesia...")
-        audio_chunks = []
-        async for chunk in tts.synthesize_stream(test_phrase):
-            audio_chunks.append(chunk)
-
-        full_pcm = b"".join(audio_chunks)
+        print("\n[DEEPGRAM LIVE] Generating reference 16kHz PCM audio...")
+        full_pcm = await generate_synthetic_audio(test_phrase)
         print(f"[DEEPGRAM LIVE] Generated {len(full_pcm)} bytes of 16kHz PCM. Streaming to Deepgram STT...")
 
         stt = DeepgramSTTAdapter(api_key=settings.DEEPGRAM_API_KEY)
