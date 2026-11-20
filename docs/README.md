@@ -23,6 +23,7 @@ Welcome to the comprehensive technical documentation for **Sahayak**, an ultra-l
 | :--- | :--- | :--- |
 | **[Indic & Multilingual Speech Support](designs/indic_multilingual_speech_support.md)** | Implemented (`v0.2.0`) | Architectural specification for Hindi & Hinglish voice support: Deepgram parameterization, Devanagari prompt steering, and dual-tier TTS dispatch. |
 | **[Multi-Turn Voice Session Persistence](designs/multi_turn_voice_session_persistence.md)** | Implemented (`v0.2.1`) | Architectural specification for persistent streaming STT sessions: proactive 5s KeepAlive heartbeats, lazy auto-reconnection guards, and Web Audio zero-gain isolation. |
+| **[Pluggable Multi-Provider Architecture](designs/multi_provider_architecture.md)** | Proposed (`v0.3.0`) | Architectural specification for pluggable multi-provider model framework across STT, LLM, and TTS with automated failover and runtime switching. |
 
 ---
 
