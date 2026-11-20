@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-11-20 (Release: `v0.3.0-multi-provider-framework`)
+
+### Added
+- **Pluggable Multi-Provider Architecture** (`app/interfaces/adapters.py`, `app/adapters/registry.py`, `app/adapters/base.py`):
+  - Defined asynchronous streaming protocol interfaces: `StreamingSTTProtocol` (`start()`, `send_audio()`, `receive_transcripts()`, `close()`), `STTTranscriptEvent` (with dual object-attribute and dict-key access), `LLMClientProtocol` (with dynamic model property), and `TTSClientProtocol`.
+  - Implemented centralized factory dispatchers (`get_stt_adapter()`, `get_llm_adapter()`, `get_tts_adapter()`) supporting `VOICE_PROFILE="production"` (cloud) and `VOICE_PROFILE="local"` (Ollama + Edge-TTS + Local Whisper).
+  - Implemented `HTTPClientManager` providing shared, pooled `httpx.AsyncClient` instances to minimize connection establishment overhead across providers.
+- **Multi-Provider LLM Suite & Prefix Continuation Failover** (`app/adapters/llm/`, `app/adapters/failover.py`):
+  - Consolidated `OpenAICompatibleLLMAdapter` supporting Groq LPU (`openai/gpt-oss-120b`, `llama-3.3-70b-versatile`), OpenAI (`gpt-4o`, `gpt-4o-mini`), Google Gemini (`gemini-2.0-flash` via OpenAI endpoint), and local Ollama (`llama3.2`).
+  - Added native `AnthropicClaudeAdapter` for Claude 3.5 Sonnet and Haiku streaming.
+  - Implemented `FailoverLLMAdapter` with `Retry-After` circuit breaker cooldowns and **prefix continuation** (if an LLM fails mid-stream after sentences were spoken, completed sentences are passed as assistant history context to the fallback LLM to continue without speech duplication).
+- **Multi-Provider TTS Suite & Turn-Sticky Failover** (`app/adapters/tts/`, `app/adapters/failover_tts.py`):
+  - `CartesiaTTSAdapter` for ultra-low latency 16kHz linear PCM streaming.
+  - `EdgeTTSAdapter` for zero-cost neural Indian English and Hindi speech synthesis.
+  - `ElevenLabsTTSAdapter` for high-fidelity 16kHz linear PCM streaming via `AsyncElevenLabs`.
+  - Implemented `FailoverTTSAdapter` with **turn stickiness** ensuring that once a sentence triggers fallback, subsequent sentences in that dialogue turn remain on the fallback provider for voice consistency.
+- **Multi-Provider STT Suite** (`app/adapters/stt/`):
+  - `DeepgramSTTAdapter` with duplex WebSocket streaming and proactive KeepAlive heartbeats.
+  - `SarvamSTTAdapter` with buffered batch ASR and in-memory PCM-to-WAV conversion for high-accuracy Indic languages.
+  - `LocalWhisperSTTAdapter` for zero-cost offline local development.
+- **Connection-Scoped Concurrency Isolation & Dynamic Control Frames** (`app/services/voice_orchestrator.py`, `app/api/websocket_endpoint.py`):
+  - Introduced `VoiceSessionContext` isolating mutable task handles (`active_generation_task`, `active_tts_task`), sentence queues, and locks per WebSocket connection, eliminating singleton race conditions.
+  - Implemented handshake query parameter negotiation (`/ws/voice?stt=...&llm=...&tts=...&lang=...`).
+  - Added runtime mid-session switching via `SET_PROVIDER` control frame with `PROVIDER_CHANGED` acknowledgment.
+  - Updated web interface (`app/static/index.html`) with header dropdown selectors for STT, LLM, and TTS providers.
+- **Deprecation Shims for Zero-Regression Compatibility**:
+  - Maintained `app/adapters/llm_groq.py`, `app/adapters/tts_cartesia.py`, `app/adapters/tts_edge.py`, and `app/adapters/stt_deepgram.py` as transparent re-export shims.
+- **Test Suite**:
+  - Added `tests/test_registry.py`, `tests/test_llm_adapters.py`, `tests/test_llm_failover.py`, `tests/test_tts_adapters.py`, `tests/test_stt_adapters.py`, and `tests/test_multi_provider_e2e.py` (total 49 passing tests).
+
+---
+
 ## [0.7.0] - 2026-11-19 (Release: `v0.2.1-multi-turn-persistence`)
 
 ### Fixed

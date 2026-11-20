@@ -10,13 +10,18 @@ It visually exposes the decision tree, speculative execution, tool calls, and LL
 
 The WebSocket endpoint manages bi-directional communication between client and server:
 
+### Connection Handshake Negotiation
+Clients can negotiate connection-scoped model profiles during the WebSocket handshake:
+`/ws/voice?stt=deepgram&llm=groq&tts=cartesia&lang=auto`
+
 ### Client $\to$ Server Frames
 
 | Frame Type | Format | Description |
 | :--- | :--- | :--- |
-| **`Binary PCM Audio`** | Raw bytes | 16kHz, 16-bit signed integer, mono PCM chunks (20ms = 640 bytes). Piped directly to Deepgram STT. |
+| **`Binary PCM Audio`** | Raw bytes | 16kHz, 16-bit signed integer, mono PCM chunks (20ms = 640 bytes). Piped directly to active STT provider. |
 | **`FINAL_TRANSCRIPT`** | JSON | `{"event": "FINAL_TRANSCRIPT", "text": "..."}`. Manually submits a text query, bypassing microphone STT. |
-| **`SET_LANGUAGE`** | JSON | `{"event": "SET_LANGUAGE", "language": "hi" \| "en-IN" \| "en" \| "multi"}`. Switches Deepgram STT language and steers downstream prompt and TTS backend dynamically. |
+| **`SET_LANGUAGE`** | JSON | `{"event": "SET_LANGUAGE", "language": "hi" \| "en-IN" \| "en" \| "multi"}`. Switches STT language and steers downstream prompt and TTS backend dynamically. |
+| **`SET_PROVIDER`** | JSON | `{"event": "SET_PROVIDER", "stt": "sarvam", "llm": "gemini", "tts": "edge"}`. Hot-swaps one or more active providers within the connection-scoped session context. |
 | **`USER_BARGE_IN`** | JSON | `{"event": "USER_BARGE_IN"}`. Immediately triggers server-side task cancellation and buffer flush. |
 | **`RESET_SESSION`** | JSON | `{"event": "RESET_SESSION"}`. Wipes the rolling multi-turn conversational memory. |
 
@@ -24,13 +29,14 @@ The WebSocket endpoint manages bi-directional communication between client and s
 
 | Frame Type | Format | Description |
 | :--- | :--- | :--- |
-| **`INTERIM_TRANSCRIPT`** | JSON | `{"event": "INTERIM_TRANSCRIPT", "text": "..."}`. Live unfinalized speech hypothesis from Deepgram. |
+| **`INTERIM_TRANSCRIPT`** | JSON | `{"event": "INTERIM_TRANSCRIPT", "text": "..."}`. Live unfinalized speech hypothesis from active STT. |
 | **`FINAL_TRANSCRIPT`** | JSON | `{"event": "FINAL_TRANSCRIPT", "text": "..."}`. Speech endpoint finalized; triggers turn execution. |
-| **`LANGUAGE_CHANGED`** | JSON | `{"event": "LANGUAGE_CHANGED", "language": "hi", "stt_model": "nova-2", "tts_engine": "edge-tts"}`. Confirms active language and synthesis backend. |
+| **`LANGUAGE_CHANGED`** | JSON | `{"event": "LANGUAGE_CHANGED", "language": "hi"}`. Confirms active session language. |
+| **`PROVIDER_CHANGED`** | JSON | `{"event": "PROVIDER_CHANGED", "stt": "sarvam", "llm": "gemini", "tts": "edge"}`. Confirms dynamic provider re-binding. |
 | **`PIPELINE_STEP`** | JSON | `{"event": "PIPELINE_STEP", "step": "...", "elapsed_ms": 12.4, "data": {...}}`. Millisecond-precision telemetry for each pipeline stage. |
-| **`LLM_TOKEN`** | JSON | `{"event": "LLM_TOKEN", "token": "...", "token_count": 14}`. Live streaming token off the Groq wire. |
+| **`LLM_TOKEN`** | JSON | `{"event": "LLM_TOKEN", "token": "...", "token_count": 14}`. Live streaming token off the wire. |
 | **`CLEAR_AUDIO_BUFFER`** | JSON | `{"event": "CLEAR_AUDIO_BUFFER"}`. Commands client to immediately mute and discard pending audio packets. |
-| **`Binary Audio Chunks`** | Raw bytes | Synthesized 16kHz PCM audio packets from Cartesia Sonic or MP3 packets from Edge-TTS. |
+| **`Binary Audio Chunks`** | Raw bytes | Synthesized 16kHz PCM audio packets (Cartesia, ElevenLabs) or MP3 packets (Edge-TTS). |
 
 ---
 
@@ -72,14 +78,26 @@ Rendered with high-DPI HTML5 Canvas 2D (`app/static/index.html`):
 
 ## 4. UI Controls & Interactive Presets
 
-### Dynamic Language Selector
-Located in the top navigation bar, the language dropdown allows one-click switching between:
-- **🌐 Hindi (हिन्दी)** (`hi`): Routes STT to Deepgram Hindi, prompts Groq in natural Devanagari Hindi/Hinglish, and synthesizes audio via Microsoft Edge-TTS (`hi-IN-SwaraNeural` / `hi-IN-MadhurNeural`).
-- **English (India)** (`en-IN`): Optimizes Deepgram STT for Indian English accents and synthesizes speech using Cartesia Sonic.
-- **English (Global)** (`en`): Standard English STT and Cartesia Sonic TTS.
-- **Multilingual** (`multi`): Enables auto-detection across code-mixed queries.
+### Dynamic Multi-Provider & Language Selectors
+Located in the top navigation bar, four synchronized dropdown selectors allow one-click switching:
+- **Speech-to-Text (STT)**:
+  - `🎙️ Deepgram Nova-2`: Real-time streaming WebSocket with KeepAlive.
+  - `🎙️ Sarvam Indic ASR`: High-accuracy Indic multilingual ASR with client buffering.
+  - `🎙️ Local Whisper`: Zero-cost offline local development profile.
+- **Large Language Model (LLM)**:
+  - `⚡ Groq LPU`: Ultra-fast inference on `openai/gpt-oss-120b`.
+  - `✨ Gemini Flash`: Google Gemini 2.0 Flash via OpenAI-compatible endpoint.
+  - `🤖 OpenAI GPT-4o`: OpenAI GPT-4o-mini completion stream.
+  - `🧠 Claude 3.5 Haiku`: Anthropic Claude native streaming.
+  - `💻 Ollama (Local)`: Local self-hosted OpenAI-compatible endpoint.
+- **Text-to-Speech (TTS)**:
+  - `🔊 Cartesia Sonic`: 16kHz linear PCM baseline for English ($180\text{ms}$ TTFAB).
+  - `🔊 Edge-TTS (Free)`: Zero-cost neural synthesis for Indic & English.
+  - `🔊 ElevenLabs Turbo`: High-fidelity low-latency 16kHz PCM voice.
+- **Language Selector**:
+  - `🌐 Auto-Detect` (`auto`), `🇮🇳 हिन्दी` (`hi`), `🇬🇧 English` (`en`).
 
-Selecting a language immediately transmits a `SET_LANGUAGE` WebSocket frame, instantly reconfiguring server STT and TTS without terminating the WebSocket session or clearing conversational memory.
+Changing any provider immediately transmits a `SET_PROVIDER` WebSocket control frame, re-binding the connection-scoped session context without dropping the WebSocket.
 
 ### One-Click Interactive Presets
 Located directly above the input bar in the UI:

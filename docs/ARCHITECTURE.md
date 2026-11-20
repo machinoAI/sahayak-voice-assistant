@@ -191,3 +191,70 @@ sequenceDiagram
 - Sahayak inserts a dedicated `GainNode` with `gain.value = 0` between the processor and `audioContext.destination`, capturing mic frames at full resolution while completely muting loopback.
 - Active synthesis playback sources are registered in `state.currentAudioSource`, allowing `stopAudioPlayback()` to immediately cancel in-flight playback buffers when a subsequent user turn commences.
 
+---
+
+## 6. Pluggable Multi-Provider Architecture & Failover Chains
+
+Sahayak v0.3.0 organizes providers into modular namespaces (`app/adapters/stt/`, `app/adapters/llm/`, `app/adapters/tts/`), managed by a centralized factory registry (`app/adapters/registry.py`) and connection-scoped session contexts (`VoiceSessionContext`):
+
+```mermaid
+flowchart TD
+    subgraph ClientGateway ["Client & Gateway"]
+        WS["WebSocket Client (/ws/voice)"]
+        EP["FastAPI WebSocket Endpoint (websocket_endpoint.py)"]
+        CONTROL["Query Param & SET_PROVIDER Handler"]
+    end
+
+    subgraph SessionState ["Connection-Scoped Context"]
+        SESS["VoiceSessionContext (Tasks, Locks & Queues)"]
+        FAILOVER_LLM["FailoverLLMAdapter (Prefix Continuation)"]
+        FAILOVER_TTS["FailoverTTSAdapter (Turn Stickiness)"]
+    end
+
+    subgraph FactoryLayer ["Centralized Registry & Client Pool"]
+        REGISTRY["Provider Registry (app/adapters/registry.py)"]
+        POOL["HTTPClientManager (Shared Connection Pools)"]
+    end
+
+    subgraph STT_Tier ["STT Providers"]
+        STT_DG["Deepgram Nova-2 (Duplex WS)"]
+        STT_SARVAM["Sarvam AI Indic ASR (Buffered Batch)"]
+        STT_LOCAL["Local Whisper / Mock"]
+    end
+
+    subgraph LLM_Tier ["LLM Providers"]
+        LLM_OAI["OpenAICompatibleLLMAdapter (Groq, OpenAI, Gemini, Ollama)"]
+        LLM_CLAUDE["AnthropicClaudeAdapter (Claude 3.5 Sonnet / Haiku)"]
+    end
+
+    subgraph TTS_Tier ["TTS Providers"]
+        TTS_CARTESIA["Cartesia Sonic (16kHz PCM)"]
+        TTS_EDGE["Edge-TTS (Neural Indic/EN MP3)"]
+        TTS_11["ElevenLabs Turbo (16kHz PCM)"]
+    end
+
+    WS --> EP
+    EP --> CONTROL
+    CONTROL --> SESS
+    SESS --> FAILOVER_LLM
+    SESS --> FAILOVER_TTS
+    REGISTRY --> POOL
+```
+
+### A. Connection-Scoped Concurrency (`VoiceSessionContext`)
+To eliminate race conditions across concurrent WebSocket connections:
+- Task handles (`active_generation_task`, `active_tts_task`), sentence queues, and WebSocket transmission locks (`ws_lock`) are connection-scoped.
+- Cancellations during barge-in affect only the interrupting user's tasks, preventing cross-session speech cutoff.
+
+### B. Tiered Failover with Prefix Continuation
+- **LLM Prefix Continuation**: If a primary LLM (e.g., Groq) drops mid-stream after sentences $S_1, S_2$ were synthesized and delivered, `FailoverLLMAdapter` catches the error, parses `Retry-After`, and initiates prefix continuation:
+  ```python
+  messages = original_prompt + [
+      {"role": "assistant", "content": completed_sentences},
+      {"role": "user", "content": "Please continue and complete the previous thought or sentence directly from where you left off without repeating."}
+  ]
+  ```
+  The fallback provider (e.g., Gemini Flash) generates only the remaining sentences without duplicating earlier speech.
+- **Turn-Sticky TTS Fallback**: `FailoverTTSAdapter` ensures that once a sentence within a turn fails over to a secondary provider (e.g., Edge-TTS), subsequent sentences in that same dialogue turn stick to the fallback provider to avoid jarring voice changes.
+
+

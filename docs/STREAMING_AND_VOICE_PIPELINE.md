@@ -73,39 +73,43 @@ Naive regex splitters break on common Indian honorifics, currencies, and Devanag
 
 ---
 
-## 4. Groq LLM Token Stream (`openai/gpt-oss-120b`) & Multilingual Steering
+## 4. Multi-Provider LLM Streaming & Prefix Continuation Failover
 
-Located at [`app/adapters/llm_groq.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/llm_groq.py):
+Located at [`app/adapters/llm/`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/llm/) and [`app/adapters/failover.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/failover.py):
 
-- **Engine**: Groq Language Processing Unit (LPU) inference.
-- **Model**: `openai/gpt-oss-120b`.
-- **Reasoning Token Optimization**:
-  Reasoning models emit `<thought>` / `delta.reasoning` tokens before generating content.
-  - **Solution**: Set `reasoning_format="hidden"` in the Groq API call and set completion token budget to 1200.
-  - **Result**: Internal reasoning tokens are computed on the LPU but hidden from the token stream, reducing TTFT to **~580ms - 850ms** and preserving 100% of the token budget for the spoken response.
-- **Strict Language Steering**:
-  - If input is Hindi or code-switched Hinglish, the system prompt instructs the model to reply strictly in grammatically correct Hindi using Devanagari script.
-  - If input is English, the model responds in standard English.
-  - Constrains responses to 1–2 spoken sentences (<35 words) for rapid speech pacing.
+- **Consolidated `OpenAICompatibleLLMAdapter`**:
+  - Implements `LLMClientProtocol` over standard OpenAI chat completion streaming endpoints.
+  - Covers **Groq LPU** (`openai/gpt-oss-120b`, `llama-3.3-70b-versatile`), **OpenAI** (`gpt-4o`, `gpt-4o-mini`), **Google Gemini** (`gemini-2.0-flash`), and local **Ollama** (`llama3.2`).
+  - Automatically hides internal reasoning tokens (`reasoning_format="hidden"`) on Groq to preserve TTFT.
+- **`AnthropicClaudeAdapter`**:
+  - Native streaming integration via `AsyncAnthropic` (`claude-3-5-sonnet`, `claude-3-5-haiku`).
+- **Prefix Continuation Failover**:
+  - When a primary LLM (e.g., Groq) fails after speaking sentence $S_1$, `FailoverLLMAdapter` captures the error, respects `Retry-After` cooldowns, and passes $S_1$ as assistant history to the fallback provider.
+  - The fallback provider generates only the missing remainder without stuttering or repeating prior speech.
 
 ---
 
-## 5. Dual-Tier Neural TTS Architecture & Turn Boundary Cleanup
+## 5. Multi-Provider Neural TTS Architecture & Turn Stickiness
 
-- **Tier 1: English Low-Latency Synthesis — Cartesia Sonic** (`app/adapters/tts_cartesia.py`):
-  - Used for English dialogue turns (`en-IN`, `en-US`).
-  - True bidirectional streaming WebSocket.
-  - Voice: Cartesia Sonic English voice (`c45bc5ec-5968-4f0b-a898-92743eed0000`).
-  - Audio container: `raw`, encoding: `pcm_s16le`, sample rate: `16000Hz`.
-  - **TTFAB**: **$180\text{ms} - 250\text{ms}$** per sentence.
-- **Tier 2: Indic Neural Voice Synthesis — Microsoft Edge-TTS** (`app/adapters/tts_edge.py`):
-  - Used for Hindi and Hinglish dialogue turns containing Devanagari Unicode.
-  - Voices: `hi-IN-SwaraNeural` (female) and `hi-IN-MadhurNeural` (male).
-  - High-fidelity pronunciation of Hindi phonemes and Devanagari numerals.
-  - **TTFAB**: **$400\text{ms} - 550\text{ms}$** per sentence.
-- **Clean Turn Boundary Transitions**:
-  - In `VoiceRAGOrchestrator.process_voice_turn()`:
-    - Before initiating a new turn, cancels both `self.active_generation_task` (LLM generation) and `self.active_tts_task` (audio synthesis).
-    - Flushes and re-instantiates `self.sentence_queue = asyncio.Queue()` so residual tokens from prior turns never leak into the new turn.
-- **Thread-Safe WebSocket Transmission**:
-  Audio chunks are transmitted over WebSocket using an `asyncio.Lock()` to prevent interleaved corruption between concurrent JSON control frames and binary audio packets.
+Located at [`app/adapters/tts/`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/tts/) and [`app/adapters/failover_tts.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/failover_tts.py):
+
+- **Cartesia Sonic (`CartesiaTTSAdapter`)**:
+  - Raw 16kHz linear PCM stream over WebSocket.
+  - TTFAB: **$180\text{ms} - 250\text{ms}$** for English queries.
+- **Microsoft Edge-TTS (`EdgeTTSAdapter`)**:
+  - Free neural synthesis with zero API keys (`en-IN-NeerjaNeural`, `hi-IN-SwaraNeural`).
+  - Delivers native Hindi pronunciation for Devanagari text.
+- **ElevenLabs Streaming (`ElevenLabsTTSAdapter`)**:
+  - High-fidelity 16kHz linear PCM streaming using `AsyncElevenLabs`.
+- **Turn Stickiness (`FailoverTTSAdapter`)**:
+  - Prevents mid-turn voice oscillations. If sentence $S_1$ fails over to a secondary provider, sentences $S_2$ and $S_3$ in the same turn remain on that provider until the turn completes.
+
+---
+
+## 6. Connection-Scoped Session Context (`VoiceSessionContext`)
+
+Located at [`app/services/voice_orchestrator.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/services/voice_orchestrator.py):
+
+- Encapsulates mutable turn tasks (`active_generation_task`, `active_tts_task`), sentence queues, and locks per active WebSocket socket.
+- Eliminates singleton race conditions across concurrent users.
+- Supports handshake query negotiation (`/ws/voice?stt=...&llm=...&tts=...&lang=...`) and dynamic mid-session switching via `SET_PROVIDER` frames.

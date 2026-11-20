@@ -11,9 +11,18 @@
 
 ## 🌟 Key Features
 
+- **Pluggable Multi-Provider Framework & Automated Tiered Failover**:
+  - **Speech-to-Text (STT)**: Deepgram Nova-2 streaming WebSocket, Sarvam AI Saaras Indic ASR, and Local Whisper offline.
+  - **Large Language Models (LLM)**: Consolidated OpenAI-compatible adapter (Groq LPU, OpenAI GPT-4o, Google Gemini Flash, local Ollama) and Anthropic Claude 3.5 Sonnet/Haiku.
+  - **Text-to-Speech (TTS)**: Cartesia Sonic (16kHz PCM), Microsoft Edge-TTS (multilingual neural Indic), and ElevenLabs Turbo (16kHz PCM).
+  - **Prefix Continuation Failover**: Mid-stream LLM dropouts seamlessly resume on fallback models using completed sentences as assistant history to avoid speech repetition.
+  - **Turn-Sticky TTS Fallback**: Guarantees voice consistency across multi-sentence conversational turns.
+- **Connection-Scoped Concurrency & Dynamic Switching**:
+  - `VoiceSessionContext` isolates task cancellations, queues, and locks per WebSocket connection.
+  - Handshake query negotiation (`/ws/voice?stt=...&llm=...&tts=...&lang=...`) and mid-turn runtime switching via `SET_PROVIDER` frames.
 - **Sub-1.2s End-to-End Latency**: Synthesizes the first spoken response word within **$790\text{ms} - 1050\text{ms}$** for English and **$1050\text{ms} - 1280\text{ms}$** for Hindi.
 - **Multilingual & Indic Speech Support**:
-  - **Speech-to-Text**: Deepgram Nova-2 streaming WebSocket parameterization (`en-IN`, `hi`, `multi`).
+  - **Speech-to-Text**: Deepgram Nova-2 streaming WebSocket parameterization (`en-IN`, `hi`, `multi`) and Sarvam AI Indic ASR.
   - **LLM Reasoning**: Groq LPU streaming (`openai/gpt-oss-120b`) with Devanagari Hindi and Hinglish prompt steering.
   - **Dual-Tier Neural TTS**: Cartesia Sonic for ultra-low latency English ($180\text{ms}$ TTFAB) and Microsoft Edge-TTS Neural (`hi-IN-SwaraNeural`, `hi-IN-MadhurNeural`) for natural Hindi prosody.
   - **Indic Pronoun Resolution**: Resolves Hindi/Hinglish demonstratives (*yeh*, *woh*, *inka*, *unka*, *iske*) across conversational turns.
@@ -34,7 +43,7 @@
   - Immediate task cancellation and audio buffer flush when the user speaks over the assistant.
 - **Real-Time Telemetry & Inspector UI**:
   - FastAPI-served diagnostic web interface at `http://localhost:8000/`.
-  - Live animated Bézier spline neural decision canvas, audio oscilloscope, and dynamic language switcher.
+  - Live animated Bézier spline neural decision canvas, audio oscilloscope, dynamic language switcher, and provider dropdown selectors.
 
 ---
 
