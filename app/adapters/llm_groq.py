@@ -1,43 +1,35 @@
 """
-Groq LLM streaming adapter implementing LLMClientProtocol.
-Provides ~100-150ms Time-To-First-Token (TTFT) for low-latency conversational voice.
+Groq LLM streaming adapter (Backward-compatibility shim).
+Deprecated: Use app.adapters.llm.openai_compatible or app.adapters.registry instead.
 """
 
-from typing import AsyncGenerator
-from groq import AsyncGroq
+import warnings
+from typing import Optional, Any
 from app.core.config import settings
+from app.adapters.llm.openai_compatible import OpenAICompatibleLLMAdapter
 
-class GroqLLMAdapter:
-    def __init__(self, api_key: str = settings.GROQ_API_KEY, model: str = settings.GROQ_MODEL):
-        self.api_key = api_key
-        self.model = model
-        self.client = AsyncGroq(api_key=api_key) if api_key else None
+warnings.warn(
+    "app.adapters.llm_groq is deprecated. Use app.adapters.llm.openai_compatible or app.adapters.registry instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-    async def stream_tokens(self, prompt: str) -> AsyncGenerator[str, None]:
-        if not self.client:
-            # Fallback mock streaming if no API key is configured
-            mock_response = [
-                "Namaste! ", "I am Sahayak, ", "your voice assistant. ",
-                "Please configure GROQ_API_KEY ", "in your .env file ",
-                "to connect live LLM inference."
-            ]
-            for token in mock_response:
-                yield token
-            return
+_UNSET = object()
 
-        kwargs = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.6,
-            "max_tokens": 1200,
-            "stream": True,
-        }
-        # Hide internal reasoning tokens to prevent token exhaustion and reduce TTFT
-        if "gpt-oss" in self.model or "reason" in self.model:
-            kwargs["reasoning_format"] = "hidden"
+class GroqLLMAdapter(OpenAICompatibleLLMAdapter):
+    """Backward-compatible Groq adapter wrapping OpenAICompatibleLLMAdapter."""
 
-        stream = await self.client.chat.completions.create(**kwargs)
-        async for chunk in stream:
-            content = chunk.choices[0].delta.content
-            if content:
-                yield content
+    def __init__(
+        self,
+        api_key: Any = _UNSET,
+        model: Optional[str] = None,
+    ):
+        effective_key = settings.GROQ_API_KEY if api_key is _UNSET else api_key
+        effective_model = model or settings.GROQ_MODEL
+        super().__init__(
+            provider="groq",
+            api_key=effective_key,
+            model=effective_model,
+            base_url="https://api.groq.com/openai/v1",
+        )
+        self.model = effective_model

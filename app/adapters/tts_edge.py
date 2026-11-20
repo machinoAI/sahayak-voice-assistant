@@ -1,21 +1,15 @@
 """
-Microsoft Edge-TTS streaming adapter implementing TTSClientProtocol.
-Free, zero API key required, with high-quality Indian English & Hindi neural voices.
+Microsoft Edge-TTS streaming adapter (Backward-compatibility shim).
+Deprecated: Use app.adapters.tts.edge or app.adapters.registry instead.
 """
 
-from typing import AsyncGenerator
-import edge_tts
-from app.core.config import settings
+import warnings
+from app.adapters.tts.edge import EdgeTTSAdapter
 
-class EdgeTTSAdapter:
-    def __init__(self, voice: str = settings.EDGE_VOICE):
-        self.voice = voice
+warnings.warn(
+    "app.adapters.tts_edge is deprecated. Use app.adapters.tts.edge or app.adapters.registry instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-    async def synthesize_stream(self, text: str) -> AsyncGenerator[bytes, None]:
-        """
-        Streams audio packets from Edge-TTS for the provided sentence/clause.
-        """
-        communicate = edge_tts.Communicate(text=text, voice=self.voice)
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio" and chunk["data"]:
-                yield chunk["data"]
+__all__ = ["EdgeTTSAdapter"]

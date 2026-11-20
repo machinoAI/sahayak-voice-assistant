@@ -9,11 +9,12 @@ import asyncio
 import re
 import uuid
 import time
-from typing import AsyncGenerator, List, Optional, Tuple
+from typing import AsyncGenerator, List, Optional, Tuple, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.interfaces.adapters import (
     STTClientProtocol,
+    StreamingSTTProtocol,
     VectorStoreProtocol,
     LLMClientProtocol,
     TTSClientProtocol,
@@ -57,10 +58,56 @@ def extract_next_sentence(buffer: str) -> Tuple[Optional[str], str]:
         remaining = buffer[match.end():]
         return sentence, remaining
 
+
+class VoiceSessionContext:
+    """Connection-scoped state isolating concurrent WebSocket sessions."""
+
+    def __init__(
+        self,
+        session_id: str,
+        stt_adapter: Any,
+        llm_adapter: LLMClientProtocol,
+        tts_adapter: TTSClientProtocol,
+        indic_tts_adapter: Optional[TTSClientProtocol] = None,
+        language: str = settings.DEFAULT_LANGUAGE,
+    ) -> None:
+        self.session_id = session_id
+        self.stt_adapter = stt_adapter
+        self.llm_adapter = llm_adapter
+        self.tts_adapter = tts_adapter
+        self.indic_tts_adapter = indic_tts_adapter
+        self.language = language
+        self.active_generation_task: Optional[asyncio.Task] = None
+        self.active_tts_task: Optional[asyncio.Task] = None
+        self.sentence_queue: Optional[asyncio.Queue[Optional[str]]] = None
+        self.current_tracker: Optional[TurnTracker] = None
+        self.ws_lock = asyncio.Lock()
+
+    def is_speaking(self) -> bool:
+        gen_active = self.active_generation_task is not None and not self.active_generation_task.done()
+        tts_active = self.active_tts_task is not None and not self.active_tts_task.done()
+        return gen_active or tts_active
+
+    async def cancel_active_tasks(self) -> None:
+        tasks = []
+        if self.active_generation_task and not self.active_generation_task.done():
+            self.active_generation_task.cancel()
+            tasks.append(self.active_generation_task)
+        if self.active_tts_task and not self.active_tts_task.done():
+            self.active_tts_task.cancel()
+            tasks.append(self.active_tts_task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if hasattr(self.tts_adapter, "reset_turn"):
+            self.tts_adapter.reset_turn()
+        if self.indic_tts_adapter and hasattr(self.indic_tts_adapter, "reset_turn"):
+            self.indic_tts_adapter.reset_turn()
+
+
 class VoiceRAGOrchestrator:
     def __init__(
         self,
-        stt: STTClientProtocol,
+        stt: Any,
         vdb: VectorStoreProtocol,
         llm: LLMClientProtocol,
         tts: TTSClientProtocol,
@@ -82,17 +129,29 @@ class VoiceRAGOrchestrator:
         self.sentence_queue: Optional[asyncio.Queue[Optional[str]]] = None
         self.current_tracker: Optional[TurnTracker] = None
 
-    async def _send_safe_json(self, websocket: WebSocket, payload: dict) -> None:
+    async def _send_safe_json(
+        self,
+        websocket: WebSocket,
+        payload: dict,
+        lock: Optional[asyncio.Lock] = None,
+    ) -> None:
         """Thread-safe WebSocket JSON frame transmission."""
-        async with self._ws_lock:
+        effective_lock = lock or self._ws_lock
+        async with effective_lock:
             try:
                 await websocket.send_json(payload)
             except (WebSocketDisconnect, RuntimeError):
                 pass
 
-    async def _send_safe_bytes(self, websocket: WebSocket, data: bytes) -> None:
+    async def _send_safe_bytes(
+        self,
+        websocket: WebSocket,
+        data: bytes,
+        lock: Optional[asyncio.Lock] = None,
+    ) -> None:
         """Thread-safe WebSocket binary audio packet transmission."""
-        async with self._ws_lock:
+        effective_lock = lock or self._ws_lock
+        async with effective_lock:
             try:
                 await websocket.send_bytes(data)
             except (WebSocketDisconnect, RuntimeError):
@@ -104,6 +163,7 @@ class VoiceRAGOrchestrator:
         tracker: TurnTracker,
         step: str,
         data: Optional[dict] = None,
+        lock: Optional[asyncio.Lock] = None,
     ) -> None:
         """Broadcasts real-time pipeline step telemetry to connected client."""
         elapsed_ms = round((time.perf_counter() - tracker.start_time) * 1000, 2)
@@ -114,47 +174,66 @@ class VoiceRAGOrchestrator:
             "elapsed_ms": elapsed_ms,
             "data": data or {},
         }
-        await self._send_safe_json(websocket, payload)
+        await self._send_safe_json(websocket, payload, lock=lock)
 
-    def is_speaking(self) -> bool:
+    def is_speaking(self, context: Optional[VoiceSessionContext] = None) -> bool:
         """Returns True if the assistant is currently generating tokens or streaming audio."""
+        if context:
+            return context.is_speaking()
         gen_active = self.active_generation_task is not None and not self.active_generation_task.done()
         tts_active = self.active_tts_task is not None and not self.active_tts_task.done()
         return gen_active or tts_active
 
     async def handle_user_interruption(
-        self, websocket: WebSocket, session_memory: Optional[SessionMemory] = None
+        self,
+        websocket: WebSocket,
+        session_memory: Optional[SessionMemory] = None,
+        context: Optional[VoiceSessionContext] = None,
     ) -> None:
         """Triggered immediately by VAD when user speaks while assistant is generating/speaking."""
-        if self.current_tracker:
-            self.current_tracker.log_step("USER_BARGE_IN_TRIGGERED")
+        tracker = context.current_tracker if context else self.current_tracker
+        lock = context.ws_lock if context else self._ws_lock
+
+        if tracker:
+            tracker.log_step("USER_BARGE_IN_TRIGGERED")
 
         if session_memory is not None:
             session_memory.mark_last_interrupted()
 
-        tasks_to_cancel = []
-        if self.active_generation_task and not self.active_generation_task.done():
-            self.active_generation_task.cancel()
-            tasks_to_cancel.append(self.active_generation_task)
+        if context:
+            await context.cancel_active_tasks()
+        else:
+            tasks_to_cancel = []
+            if self.active_generation_task and not self.active_generation_task.done():
+                self.active_generation_task.cancel()
+                tasks_to_cancel.append(self.active_generation_task)
 
-        if self.active_tts_task and not self.active_tts_task.done():
-            self.active_tts_task.cancel()
-            tasks_to_cancel.append(self.active_tts_task)
+            if self.active_tts_task and not self.active_tts_task.done():
+                self.active_tts_task.cancel()
+                tasks_to_cancel.append(self.active_tts_task)
 
-        if tasks_to_cancel:
-            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+            if tasks_to_cancel:
+                await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-        await self._send_safe_json(websocket, {"event": "CLEAR_AUDIO_BUFFER"})
-        if self.current_tracker:
-            self.current_tracker.log_step("BUFFER_CLEARED_ON_BARGE_IN")
+        await self._send_safe_json(websocket, {"event": "CLEAR_AUDIO_BUFFER"}, lock=lock)
+        if tracker:
+            tracker.log_step("BUFFER_CLEARED_ON_BARGE_IN")
 
     async def _tts_worker(
-        self, queue: asyncio.Queue[Optional[str]], websocket: WebSocket, tracker: TurnTracker
+        self,
+        queue: asyncio.Queue[Optional[str]],
+        websocket: WebSocket,
+        tracker: TurnTracker,
+        context: Optional[VoiceSessionContext] = None,
     ) -> None:
         """Decoupled consumer worker synthesizing sentences concurrently without freezing LLM intake."""
         sentence_count = 0
         total_audio_bytes = 0
         first_audio_packet_sent = False
+        lock = context.ws_lock if context else self._ws_lock
+        tts_inst = context.tts_adapter if context else self.tts
+        indic_inst = (context.indic_tts_adapter if context else self.indic_tts) or self.indic_tts
+        session_lang = context.language if context else self.session_language
 
         try:
             while True:
@@ -172,9 +251,9 @@ class VoiceRAGOrchestrator:
                 try:
                     has_devanagari = bool(re.search(r'[\u0900-\u097F]', sentence))
                     active_tts = (
-                        self.indic_tts
-                        if (self.indic_tts and (has_devanagari or self.session_language == "hi"))
-                        else self.tts
+                        indic_inst
+                        if (indic_inst and (has_devanagari or session_lang == "hi"))
+                        else tts_inst
                     )
                     async for audio_chunk in active_tts.synthesize_stream(sentence):
                         if not first_audio_packet_sent:
@@ -185,10 +264,10 @@ class VoiceRAGOrchestrator:
                                 {"ttfab_ms": ttfab_ms},
                             )
                             await self._broadcast_step(
-                                websocket, tracker, "TTS_FIRST_AUDIO_PACKET", {"ttfab_ms": ttfab_ms}
+                                websocket, tracker, "TTS_FIRST_AUDIO_PACKET", {"ttfab_ms": ttfab_ms}, lock=lock
                             )
                         total_audio_bytes += len(audio_chunk)
-                        await self._send_safe_bytes(websocket, audio_chunk)
+                        await self._send_safe_bytes(websocket, audio_chunk, lock=lock)
                     
                     tracker.log_step(
                         f"TTS_SENTENCE_STREAMED_S{sentence_count}",
@@ -209,33 +288,50 @@ class VoiceRAGOrchestrator:
         final_transcript: str,
         websocket: WebSocket,
         session_memory: Optional[SessionMemory] = None,
+        context: Optional[VoiceSessionContext] = None,
     ) -> TurnTracker:
         """Executes vector retrieval, prompt compilation, and decoupled token-to-speech streaming."""
         turn_id = str(uuid.uuid4())
         tracker = TurnTracker(turn_id)
-        self.current_tracker = tracker
+        lock = context.ws_lock if context else self._ws_lock
+        active_llm = context.llm_adapter if context else self.llm
+
+        if context:
+            context.current_tracker = tracker
+        else:
+            self.current_tracker = tracker
 
         tracker.log_step("TURN_INITIATED", {"transcript": final_transcript, "length": len(final_transcript)})
 
-        # Cancel any previous in-flight turn tasks (if a new turn triggers before prior turn fully completes)
-        tasks_to_cancel = []
         curr_task = asyncio.current_task()
-        if self.active_generation_task and self.active_generation_task != curr_task and not self.active_generation_task.done():
-            self.active_generation_task.cancel()
-            tasks_to_cancel.append(self.active_generation_task)
+        if context:
+            await context.cancel_active_tasks()
+            sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+            context.sentence_queue = sentence_queue
+            context.active_tts_task = asyncio.create_task(
+                self._tts_worker(sentence_queue, websocket, tracker, context=context)
+            )
+            context.active_generation_task = curr_task
+        else:
+            tasks_to_cancel = []
+            if self.active_generation_task and self.active_generation_task != curr_task and not self.active_generation_task.done():
+                self.active_generation_task.cancel()
+                tasks_to_cancel.append(self.active_generation_task)
 
-        if self.active_tts_task and not self.active_tts_task.done():
-            self.active_tts_task.cancel()
-            tasks_to_cancel.append(self.active_tts_task)
+            if self.active_tts_task and not self.active_tts_task.done():
+                self.active_tts_task.cancel()
+                tasks_to_cancel.append(self.active_tts_task)
 
-        if tasks_to_cancel:
-            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+            if tasks_to_cancel:
+                await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-        self.sentence_queue = asyncio.Queue()
-        self.active_tts_task = asyncio.create_task(
-            self._tts_worker(self.sentence_queue, websocket, tracker)
-        )
-        self.active_generation_task = curr_task
+            sentence_queue = asyncio.Queue()
+            self.sentence_queue = sentence_queue
+            self.active_tts_task = asyncio.create_task(
+                self._tts_worker(sentence_queue, websocket, tracker)
+            )
+            self.active_generation_task = curr_task
+
         collected_tokens: List[str] = []
 
         try:
@@ -255,6 +351,7 @@ class VoiceRAGOrchestrator:
                     "augmented_query": search_query,
                     "augmented": search_query != final_transcript,
                 },
+                lock=lock,
             )
 
             intent: QueryIntent
@@ -271,6 +368,7 @@ class VoiceRAGOrchestrator:
                     tracker,
                     "ROUTER_CLASSIFY_COMPLETE",
                     {"intent": intent.value, "router": "semantic", "latency_ms": router_latency_ms},
+                    lock=lock,
                 )
             else:
                 temporal_keywords = {
@@ -292,6 +390,7 @@ class VoiceRAGOrchestrator:
                     tracker,
                     "ROUTER_CLASSIFY_COMPLETE",
                     {"intent": intent.value, "router": "keyword_fallback", "latency_ms": router_latency_ms},
+                    lock=lock,
                 )
 
             # 2. Speculative Concurrent Web Search Dispatch (for temporal queries)
@@ -307,6 +406,7 @@ class VoiceRAGOrchestrator:
                     tracker,
                     "SPECULATIVE_SEARCH_DISPATCHED",
                     {"query": search_query, "trigger": "temporal"},
+                    lock=lock,
                 )
                 search_task = asyncio.create_task(
                     self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
@@ -326,6 +426,7 @@ class VoiceRAGOrchestrator:
                 tracker,
                 "RAG_RETRIEVAL_START",
                 {"query": search_query, "raw_query": final_transcript},
+                lock=lock,
             )
             vdb_start = time.perf_counter()
             docs: List[RetrievedDocument] = await self.vdb.hybrid_search(
@@ -361,11 +462,11 @@ class VoiceRAGOrchestrator:
                         for d in docs
                     ],
                 },
+                lock=lock,
             )
 
             # 4. Corrective RAG (CRAG) Tri-State Evaluation & Concurrency Arbitration
             if intent == QueryIntent.REALTIME_TEMPORAL:
-                # Explicit temporal intent: await speculative search and merge results
                 await self._broadcast_step(
                     websocket,
                     tracker,
@@ -377,6 +478,7 @@ class VoiceRAGOrchestrator:
                         "high_threshold": settings.CRAG_HIGH_THRESHOLD,
                         "low_threshold": settings.CRAG_LOW_THRESHOLD,
                     },
+                    lock=lock,
                 )
                 web_docs: List[RetrievedDocument] = []
                 if search_task:
@@ -400,12 +502,11 @@ class VoiceRAGOrchestrator:
                                 for d in web_docs
                             ],
                         },
+                        lock=lock,
                     )
                 if web_docs:
                     docs = web_docs + docs
             elif top_score >= settings.CRAG_HIGH_THRESHOLD:
-                # CORRECT (>= 0.82): High local confidence.
-                # If speculative search was launched, cancel it
                 if search_task and not search_task.done():
                     search_task.cancel()
                     tracker.log_step(
@@ -417,6 +518,7 @@ class VoiceRAGOrchestrator:
                         tracker,
                         "SPECULATIVE_SEARCH_CANCELLED",
                         {"reason": "high_local_confidence", "score": round(top_score, 3), "threshold": settings.CRAG_HIGH_THRESHOLD},
+                        lock=lock,
                     )
                 await self._broadcast_step(
                     websocket,
@@ -429,9 +531,9 @@ class VoiceRAGOrchestrator:
                         "high_threshold": settings.CRAG_HIGH_THRESHOLD,
                         "low_threshold": settings.CRAG_LOW_THRESHOLD,
                     },
+                    lock=lock,
                 )
             elif top_score < settings.CRAG_LOW_THRESHOLD:
-                # INCORRECT (< 0.55): Local knowledge is absent or irrelevant -> Pure Web Search
                 await self._broadcast_step(
                     websocket,
                     tracker,
@@ -443,6 +545,7 @@ class VoiceRAGOrchestrator:
                         "high_threshold": settings.CRAG_HIGH_THRESHOLD,
                         "low_threshold": settings.CRAG_LOW_THRESHOLD,
                     },
+                    lock=lock,
                 )
                 if not search_task and self.search and settings.WEB_SEARCH_ENABLED:
                     tracker.log_step(
@@ -454,6 +557,7 @@ class VoiceRAGOrchestrator:
                         tracker,
                         "WEB_SEARCH_START",
                         {"query": search_query, "trigger": "crag_low_confidence", "score": round(top_score, 3)},
+                        lock=lock,
                     )
                     search_task = asyncio.create_task(
                         self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
@@ -481,12 +585,12 @@ class VoiceRAGOrchestrator:
                                 for d in web_docs
                             ],
                         },
+                        lock=lock,
                     )
 
                 if web_docs:
-                    docs = web_docs  # Suppress local docs to prevent hallucinations
+                    docs = web_docs
             else:
-                # AMBIGUOUS (0.55 <= score < 0.82): Hybrid Merge
                 await self._broadcast_step(
                     websocket,
                     tracker,
@@ -498,6 +602,7 @@ class VoiceRAGOrchestrator:
                         "high_threshold": settings.CRAG_HIGH_THRESHOLD,
                         "low_threshold": settings.CRAG_LOW_THRESHOLD,
                     },
+                    lock=lock,
                 )
                 if not search_task and self.search and settings.WEB_SEARCH_ENABLED:
                     tracker.log_step(
@@ -509,6 +614,7 @@ class VoiceRAGOrchestrator:
                         tracker,
                         "WEB_SEARCH_START",
                         {"query": search_query, "trigger": "crag_ambiguous", "score": round(top_score, 3)},
+                        lock=lock,
                     )
                     search_task = asyncio.create_task(
                         self.search.search(query=search_query, max_results=settings.WEB_SEARCH_MAX_RESULTS)
@@ -536,6 +642,7 @@ class VoiceRAGOrchestrator:
                                 for d in web_docs
                             ],
                         },
+                        lock=lock,
                     )
 
                 if web_docs:
@@ -568,16 +675,17 @@ class VoiceRAGOrchestrator:
                 prompt = f"{system_prompt}\nContext:\n{context_text}\nUser Question: {final_transcript}"
 
             # 3. LLM Token Stream -> Sentence Boundary Splitter -> Queue Producer
-            tracker.log_step("LLM_STREAM_START", {"model": getattr(self.llm, "model", "default")})
+            model_name = getattr(active_llm, "model", "default")
+            tracker.log_step("LLM_STREAM_START", {"model": model_name})
             await self._broadcast_step(
-                websocket, tracker, "LLM_STREAM_START", {"model": getattr(self.llm, "model", "default")}
+                websocket, tracker, "LLM_STREAM_START", {"model": model_name}, lock=lock
             )
             sentence_buffer = ""
             token_count = 0
             first_token_received = False
             sentence_dispatched = 0
 
-            async for token in self.llm.stream_tokens(prompt):
+            async for token in active_llm.stream_tokens(prompt):
                 if not first_token_received:
                     first_token_received = True
                     ttft_ms = round((time.perf_counter() - tracker.start_time) * 1000, 1)
@@ -585,7 +693,7 @@ class VoiceRAGOrchestrator:
                         "LLM_FIRST_TOKEN",
                         {"ttft_ms": ttft_ms},
                     )
-                    await self._broadcast_step(websocket, tracker, "LLM_FIRST_TOKEN", {"ttft_ms": ttft_ms})
+                    await self._broadcast_step(websocket, tracker, "LLM_FIRST_TOKEN", {"ttft_ms": ttft_ms}, lock=lock)
 
                 token_count += 1
                 collected_tokens.append(token)
@@ -600,6 +708,7 @@ class VoiceRAGOrchestrator:
                         "token": token,
                         "token_count": token_count,
                     },
+                    lock=lock,
                 )
 
                 # Drain all matched sentences from the buffer without slicing corruption
@@ -613,7 +722,7 @@ class VoiceRAGOrchestrator:
                             f"SENTENCE_QUEUED_S{sentence_dispatched}",
                             {"text": sentence[:40]},
                         )
-                        await self.sentence_queue.put(sentence)
+                        await sentence_queue.put(sentence)
 
             # Flush any remaining text in buffer upon token completion
             remaining = sentence_buffer.strip()
@@ -623,7 +732,7 @@ class VoiceRAGOrchestrator:
                     f"SENTENCE_QUEUED_S{sentence_dispatched}_REMAINING",
                     {"text": remaining[:40]},
                 )
-                await self.sentence_queue.put(remaining)
+                await sentence_queue.put(remaining)
 
             tracker.log_step(
                 "LLM_STREAM_COMPLETE",
@@ -631,8 +740,10 @@ class VoiceRAGOrchestrator:
             )
 
             # Enqueue sentinel and await audio synthesis worker completion
-            await self.sentence_queue.put(None)
-            await self.active_tts_task
+            await sentence_queue.put(None)
+            active_tts_task = context.active_tts_task if context else self.active_tts_task
+            if active_tts_task:
+                await active_tts_task
 
             # Commit completed dialogue turn to session memory
             full_assistant_reply = "".join(collected_tokens).strip()
@@ -659,6 +770,7 @@ class VoiceRAGOrchestrator:
                     "sentences": sentence_dispatched,
                     "response": full_assistant_reply,
                 },
+                lock=lock,
             )
 
         except asyncio.CancelledError:
@@ -671,17 +783,23 @@ class VoiceRAGOrchestrator:
                     assistant_response=partial_reply,
                     was_interrupted=True,
                 )
-            if self.active_tts_task and not self.active_tts_task.done():
-                self.active_tts_task.cancel()
+            active_tts_task = context.active_tts_task if context else self.active_tts_task
+            if active_tts_task and not active_tts_task.done():
+                active_tts_task.cancel()
         except WebSocketDisconnect:
             tracker.log_step("CLIENT_DISCONNECTED")
-            if self.active_tts_task and not self.active_tts_task.done():
-                self.active_tts_task.cancel()
+            active_tts_task = context.active_tts_task if context else self.active_tts_task
+            if active_tts_task and not active_tts_task.done():
+                active_tts_task.cancel()
         except Exception as e:
             tracker.log_error("TURN_EXECUTION_ERROR", e)
             raise
         finally:
-            self.active_generation_task = None
-            self.active_tts_task = None
+            if context:
+                context.active_generation_task = None
+                context.active_tts_task = None
+            else:
+                self.active_generation_task = None
+                self.active_tts_task = None
 
         return tracker

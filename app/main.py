@@ -1,6 +1,7 @@
 """
 Sahayak Voice Assistant FastAPI Application Entrypoint.
-Connects concrete adapters: Edge-TTS, Groq LLM, Qdrant Vector Store, and Deepgram STT.
+Connects concrete adapters: Edge-TTS, Cartesia, Groq LLM, Qdrant Vector Store, Deepgram STT, etc.
+via centralized multi-provider factories.
 """
 
 from pathlib import Path
@@ -9,11 +10,13 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
 from app.api.websocket_endpoint import get_voice_router
-from app.adapters.tts_edge import EdgeTTSAdapter
-from app.adapters.tts_cartesia import CartesiaTTSAdapter
-from app.adapters.llm_groq import GroqLLMAdapter
+from app.adapters.registry import (
+    get_stt_adapter,
+    get_llm_adapter,
+    get_tts_adapter,
+    list_supported_providers,
+)
 from app.adapters.vector_store_qdrant import QdrantVectorStoreAdapter
-from app.adapters.stt_deepgram import DeepgramSTTAdapter
 from app.adapters.search_tavily import TavilySearchAdapter
 from app.adapters.semantic_router import SemanticRouterAdapter
 from app.core.config import settings
@@ -21,31 +24,21 @@ from app.core.config import settings
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Sahayak Voice Assistant API",
-        version="0.1.0",
-        description="High-performance async streaming Voice RAG backend.",
+        version="0.2.0",
+        description="High-performance async streaming Voice RAG backend with multi-provider architecture.",
     )
 
-    # Initialize concrete adapters (prefer Cartesia if key is configured, fallback to Edge-TTS)
-    if settings.CARTESIA_API_KEY:
-        tts_adapter = CartesiaTTSAdapter(
-            api_key=settings.CARTESIA_API_KEY,
-            voice_id=settings.CARTESIA_VOICE_ID,
-        )
-        tts_provider_name = "cartesia-sonic"
-    else:
-        tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_VOICE)
-        tts_provider_name = "edge-tts"
+    # Initialize concrete adapters via centralized registry
+    tts_adapter = get_tts_adapter()
+    indic_tts_adapter = get_tts_adapter("edge")
+    llm_adapter = get_llm_adapter()
+    stt_adapter = get_stt_adapter()
 
-    # Always instantiate Indic Edge-TTS adapter for native Hindi synthesis
-    indic_tts_adapter = EdgeTTSAdapter(voice=settings.EDGE_TTS_INDIC_VOICE)
-
-    llm_adapter = GroqLLMAdapter(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
     vdb_adapter = QdrantVectorStoreAdapter(
         url=settings.QDRANT_URL,
         api_key=settings.QDRANT_API_KEY,
         collection_name=settings.QDRANT_COLLECTION,
     )
-    stt_adapter = DeepgramSTTAdapter(api_key=settings.DEEPGRAM_API_KEY)
     search_adapter = (
         TavilySearchAdapter(api_key=settings.TAVILY_API_KEY)
         if settings.WEB_SEARCH_ENABLED
@@ -87,7 +80,14 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "service": "sahayak-voice-assistant",
-            "tts_provider": tts_provider_name,
+            "voice_profile": settings.VOICE_PROFILE,
+            "active_providers": {
+                "stt": settings.ACTIVE_STT_PROVIDER,
+                "llm": settings.ACTIVE_LLM_PROVIDER,
+                "tts": settings.ACTIVE_TTS_PROVIDER or settings.TTS_PROVIDER,
+            },
+            "supported_providers": list_supported_providers(),
+            "tts_provider": settings.ACTIVE_TTS_PROVIDER or settings.TTS_PROVIDER,
             "voice": settings.CARTESIA_VOICE_ID if settings.CARTESIA_API_KEY else settings.EDGE_VOICE,
             "indic_tts_voice": settings.EDGE_TTS_INDIC_VOICE,
             "default_language": settings.DEFAULT_LANGUAGE,
@@ -100,7 +100,3 @@ def create_app() -> FastAPI:
     return app
 
 app = create_app()
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=settings.DEBUG)

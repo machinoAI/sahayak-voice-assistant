@@ -787,7 +787,24 @@
         <div class="status-dot"></div>
         <span>Connected</span>
       </div>
-      <div class="lang-selector-wrap">
+      <div class="lang-selector-wrap" style="display:flex; gap:6px; align-items:center;">
+        <select id="sttSelect" class="lang-select" onchange="changeProvider()" title="Speech-to-Text Provider">
+          <option value="deepgram">🎙️ Deepgram Nova-2</option>
+          <option value="sarvam">🎙️ Sarvam Indic ASR</option>
+          <option value="local">🎙️ Local Whisper</option>
+        </select>
+        <select id="llmSelect" class="lang-select" onchange="changeProvider()" title="LLM Provider">
+          <option value="groq">⚡ Groq LPU</option>
+          <option value="gemini">✨ Gemini Flash</option>
+          <option value="openai">🤖 OpenAI GPT-4o</option>
+          <option value="anthropic">🧠 Claude 3.5 Haiku</option>
+          <option value="ollama">💻 Ollama (Local)</option>
+        </select>
+        <select id="ttsSelect" class="lang-select" onchange="changeProvider()" title="TTS Provider">
+          <option value="cartesia">🔊 Cartesia Sonic</option>
+          <option value="edge">🔊 Edge-TTS (Free)</option>
+          <option value="elevenlabs">🔊 ElevenLabs Turbo</option>
+        </select>
         <select id="languageSelect" class="lang-select" onchange="changeLanguage(this.value)" title="Language Selection (Deepgram Multilingual STT & Indic TTS)">
           <option value="auto">🌐 Auto-Detect</option>
           <option value="hi">🇮🇳 हिन्दी (Hindi)</option>
@@ -1091,7 +1108,11 @@
     function connectWebSocket() {
       const loc = window.location;
       const wsProtocol = loc.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${wsProtocol}//${loc.host}/ws/voice`;
+      const sttVal = document.getElementById("sttSelect")?.value || "deepgram";
+      const llmVal = document.getElementById("llmSelect")?.value || "groq";
+      const ttsVal = document.getElementById("ttsSelect")?.value || "cartesia";
+      const langVal = document.getElementById("languageSelect")?.value || "auto";
+      const wsUrl = `${wsProtocol}//${loc.host}/ws/voice?stt=${sttVal}&llm=${llmVal}&tts=${ttsVal}&lang=${langVal}`;
       
       state.ws = new WebSocket(wsUrl);
       state.ws.binaryType = "arraybuffer";
@@ -1100,10 +1121,6 @@
         state.isConnected = true;
         document.getElementById("wsStatus").innerHTML = '<div class="status-dot"></div><span>Connected</span>';
         document.getElementById("wsStatus").style.color = "var(--emerald-accent)";
-        const langVal = document.getElementById("languageSelect")?.value;
-        if (langVal && langVal !== "auto") {
-          state.ws.send(JSON.stringify({ event: "SET_LANGUAGE", language: langVal }));
-        }
       };
 
       state.ws.onclose = () => {
@@ -1166,6 +1183,11 @@
           langSelect.value = msg.language;
         }
         console.log("[SERVER] Language switched to:", msg.language);
+      } else if (eventType === "PROVIDER_CHANGED") {
+        if (msg.stt && document.getElementById("sttSelect")) document.getElementById("sttSelect").value = msg.stt;
+        if (msg.llm && document.getElementById("llmSelect")) document.getElementById("llmSelect").value = msg.llm;
+        if (msg.tts && document.getElementById("ttsSelect")) document.getElementById("ttsSelect").value = msg.tts;
+        console.log("[SERVER] Providers changed to:", msg);
       }
     }
 
@@ -1401,6 +1423,24 @@
       }
       state.ws.send(JSON.stringify({ event: "SET_LANGUAGE", language: lang }));
       console.log("[CLIENT] Sent SET_LANGUAGE:", lang);
+    }
+
+    function changeProvider() {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        console.warn("WebSocket not connected; reconnecting with new selection...");
+        connectWebSocket();
+        return;
+      }
+      const stt = document.getElementById("sttSelect")?.value;
+      const llm = document.getElementById("llmSelect")?.value;
+      const tts = document.getElementById("ttsSelect")?.value;
+      state.ws.send(JSON.stringify({
+        event: "SET_PROVIDER",
+        stt: stt,
+        llm: llm,
+        tts: tts,
+      }));
+      console.log("[CLIENT] Sent SET_PROVIDER:", { stt, llm, tts });
     }
 
     /* =========================================================================
