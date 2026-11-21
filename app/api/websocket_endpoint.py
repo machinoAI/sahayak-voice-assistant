@@ -109,11 +109,15 @@ def get_voice_router(orchestrator: VoiceRAGOrchestrator) -> APIRouter:
                             "text": text,
                         }, lock=context.ws_lock)
                         # Launch connection-scoped voice turn
-                        asyncio.create_task(
-                            orchestrator.process_voice_turn(
-                                text, websocket, session_memory=session_memory, context=context
-                            )
-                        )
+                        async def _run_turn():
+                            try:
+                                await orchestrator.process_voice_turn(
+                                    text, websocket, session_memory=session_memory, context=context
+                                )
+                            except Exception as ex:
+                                logger.exception(f"[WS Voice] Turn processing error: {ex}")
+
+                        asyncio.create_task(_run_turn())
 
             except asyncio.CancelledError:
                 pass

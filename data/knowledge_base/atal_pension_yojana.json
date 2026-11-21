@@ -1,0 +1,15 @@
+{
+  "id": "scheme-atal-pension-01",
+  "name": "Atal Pension Yojana (APY)",
+  "category": "Pension & Senior Citizen Welfare",
+  "ministry": "Ministry of Finance / Pension Fund Regulatory and Development Authority (PFRDA)",
+  "summary": "Atal Pension Yojana is a government-backed periodic pension scheme targeted primarily at the unorganized sector workers to provide social security and financial independence in old age.",
+  "eligibility": "Any Indian citizen between 18 and 40 years of age having a savings bank account or post office account. Individuals who are income taxpayers are not eligible to join APY (rule effective from October 1, 2022).",
+  "benefits": "Guaranteed minimum monthly pension of ₹1,000, ₹2,000, ₹3,000, ₹4,000, or ₹5,000 per month starting at age 60, depending on the subscriber's contribution and age at entry. Upon subscriber death, the same pension continues to spouse; after spouse's demise, total accumulated pension corpus is returned to the nominee.",
+  "application_process": "Apply through any nationalized or private bank branch where the savings account is maintained, or via net banking. Auto-debit facility from bank account is required.",
+  "key_facts": [
+    "Entry age window: 18 to 40 years; minimum contribution tenure is 20 years.",
+    "Central government co-contribution and tax benefits under section 80CCD.",
+    "Administered by PFRDA through the National Pension System (NPS) architecture."
+  ]
+}

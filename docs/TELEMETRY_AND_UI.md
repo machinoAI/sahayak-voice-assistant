@@ -86,7 +86,7 @@ Located in the top navigation bar, four synchronized dropdown selectors allow on
   - `🎙️ Local Whisper`: Zero-cost offline local development profile.
 - **Large Language Model (LLM)**:
   - `⚡ Groq LPU`: Ultra-fast inference on `openai/gpt-oss-120b`.
-  - `✨ Gemini Flash`: Google Gemini 2.0 Flash via OpenAI-compatible endpoint.
+  - `✨ Gemini Flash`: Google Gemini 3.8 Flash via OpenAI-compatible endpoint.
   - `🤖 OpenAI GPT-4o`: OpenAI GPT-4o-mini completion stream.
   - `🧠 Claude 3.5 Haiku`: Anthropic Claude native streaming.
   - `💻 Ollama (Local)`: Local self-hosted OpenAI-compatible endpoint.
@@ -108,3 +108,10 @@ Located directly above the input bar in the UI:
 | **🌦️ Today's News (Temporal)** | *"What is the latest news update today?"* | Tests `REALTIME_TEMPORAL` classification and parallel speculative web search dispatch. |
 | **⚖️ Fertilizer Subsidy (Ambiguous)** | *"Did the government change the fertilizer subsidy rules?"* | Tests CRAG `AMBIGUOUS` state: Merges local baseline rules with live web search facts. |
 | **🌍 US President (Out of Domain)** | *"Who was the first president of the United States?"* | Tests CRAG `INCORRECT` state ($< 0.55$): Local docs suppressed; Tavily web search answers the question. |
+
+---
+
+## 5. Favicon & Static Asset Handling
+
+- **Inline SVG Favicon**: To eliminate continuous `404 Not Found` log spam when browsers request `/favicon.ico`, FastAPI serves an inline vector microphone SVG with a dark slate background, warm saffron mic body, and cyan sound wave accents matching Sahayak's branding.
+- **Self-Contained Static Assets**: The single-page interface is served from [`app/static/index.html`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/static/index.html), utilizing CSS variables and canvas rendering without requiring external build pipelines or node tooling. |

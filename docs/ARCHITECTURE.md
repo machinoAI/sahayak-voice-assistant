@@ -257,4 +257,73 @@ To eliminate race conditions across concurrent WebSocket connections:
   The fallback provider (e.g., Gemini Flash) generates only the remaining sentences without duplicating earlier speech.
 - **Turn-Sticky TTS Fallback**: `FailoverTTSAdapter` ensures that once a sentence within a turn fails over to a secondary provider (e.g., Edge-TTS), subsequent sentences in that same dialogue turn stick to the fallback provider to avoid jarring voice changes.
 
+---
+
+## 7. Knowledge Base Ingestion & Grounded Seed Data
+
+Sahayak provides an authoritative local knowledge base of key Indian citizen welfare schemes, stored under [`data/knowledge_base/`](../data/knowledge_base/):
+
+| Dataset File | Scheme Name | Key Grounded Attributes |
+| :--- | :--- | :--- |
+| **`pm_kisan.json`** | PM-KISAN | ₹6,000/yr in 3 installments of ₹2,000, DBT bank transfer, landholding eligibility, tax-payer exclusions. |
+| **`ayushman_bharat.json`** | AB-PMJAY | ₹5 lakh/family/year cashless healthcare, secondary/tertiary hospital care, SECC 2011 criteria, senior citizen expansion. |
+| **`pm_awas_yojana.json`** | PMAY (Gramin & Urban) | Pucca house grants (₹1.20L plains / ₹1.30L hilly), CLSS interest subsidy, female head ownership requirement. |
+| **`atal_pension_yojana.json`** | APY | Guaranteed ₹1,000 to ₹5,000/mo pension starting at age 60, entry age 18-40, PFRDA administration. |
+| **`pm_ujjwala_yojana.json`** | PMUY (Ujjwala 2.0) | Deposit-free LPG connections for women in BPL households, ₹1,600 assistance, targeted cylinder subsidies. |
+| **`sukanya_samriddhi_yojana.json`** | SSY | Small savings for girl child under 10 years, 8.2% compound interest, EEE tax benefits, 21-year maturity. |
+
+### Ingestion Architecture (`scripts/ingest_knowledge.py`)
+- **FastEmbed Embedding**: Generates 384-dimensional dense vectors using `BAAI/bge-small-en-v1.5` entirely on CPU in $<10\text{ms}$ per chunk.
+- **Dual Invocation**:
+  ```bash
+  make ingest
+  # Or: python scripts/ingest_knowledge.py
+  # Or: python -m app.adapters.vector_store_qdrant --ingest
+  ```
+- **Concurrency & Lock Guard**: Local disk mode (`qdrant_storage/.lock`) uses exclusive file locking. The ingestion script detects if the local directory is locked by a running uvicorn instance and guides the user to either pause the server or target a standalone Qdrant container (`--url http://localhost:6333`).
+
+---
+
+## 8. Developer Tooling, Containerization & CI/CD
+
+To ensure production stability and zero developer friction, Sahayak includes comprehensive automation:
+
+### A. Developer Task Runner (`Makefile`)
+Provides standard commands across the development lifecycle:
+- `make dev`: Launches FastAPI uvicorn server with hot reload on port 8000.
+- `make test`: Runs full automated pytest suite in isolated memory mode (`QDRANT_PATH=":memory:"`).
+- `make ingest`: Indexes citizen welfare schemes into Qdrant.
+- `make benchmark`: Runs TTFT and TTFAB latency benchmarking suite.
+- `make lint`: Performs Ruff quality and undefined-variable checks.
+- `make clean`: Cleans pycache, test caches, and temporary audio files.
+
+### B. Containerization (`Dockerfile` & `docker-compose.yml`)
+- **`Dockerfile`**: Lightweight image based on `python:3.12-slim-bookworm` containing system audio/codec packages (`portaudio`, `ffmpeg`, `libsndfile1`), curl healthcheck, and application code.
+- **`docker-compose.yml`**: Deploys the FastAPI assistant alongside a standalone `qdrant/qdrant:latest` service with persistent volume storage (`qdrant_data`), eliminating local disk file-lock contention.
+
+### C. Continuous Integration (`.github/workflows/ci.yml`)
+Automated GitHub Actions pipeline triggered on every push and PR to `main`:
+- Matrix testing across Python 3.11, 3.12, and 3.13 on `ubuntu-latest`.
+- Installs audio dependencies (`ffmpeg`, `libportaudio2`, `portaudio19-dev`).
+- Runs Ruff linting and the complete pytest test suite in memory.
+
+---
+
+## 9. Automated Latency Benchmarking Suite
+
+Located at [`scripts/benchmark_providers.py`](../scripts/benchmark_providers.py), the automated benchmarking tool empirically validates voice pipeline performance against the **sub-1200ms TTFAB budget**:
+- **Stage 1 (LLM Inference)**: Evaluates Time-to-First-Token (TTFT), streaming velocity (tokens/sec), and token distributions across Groq, OpenAI, Gemini, Claude, and Ollama.
+- **Stage 2 (TTS Synthesis)**: Evaluates Time-to-First-Audio-Byte (TTFAB), audio byte throughput, and Real-Time Factor (RTF) across Cartesia, Edge-TTS, and ElevenLabs.
+- **Stage 3 (Coupled Pipeline)**: Simulates the voice orchestrator's decoupled worker queue (sentence extraction $\to$ concurrent audio synthesis) and measures end-to-end voice budget adherence.
+- Results are reported in colorized terminal ASCII tables and saved to [`docs/BENCHMARKS.md`](BENCHMARKS.md).
+
+---
+
+## 10. Event Loop-Aware Connection Pool Management
+
+To ensure reliable operation across multiple event loops (e.g. in test runners, separate background tasks, or sub-processes):
+- `HTTPClientManager`, `OpenAICompatibleLLMAdapter`, and `AnthropicClaudeAdapter` dynamically track the current running asyncio event loop (`asyncio.get_running_loop()`).
+- If an existing client was bound to a closed or superseded event loop, the adapter lazily instantiates a fresh client for the active loop, eliminating `RuntimeError: Event loop is closed` failures.
+
+
 

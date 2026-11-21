@@ -2,8 +2,9 @@
 Anthropic Claude streaming LLM adapter.
 """
 
+import asyncio
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Union
+from typing import AsyncGenerator, List, Dict, Optional, Union, Any
 from anthropic import AsyncAnthropic
 
 from app.interfaces.adapters import LLMMessage
@@ -25,10 +26,24 @@ class AnthropicClaudeAdapter:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
-        self.client = AsyncAnthropic(
-            api_key=api_key or "",
-            timeout=timeout,
-        )
+        self.api_key = api_key or ""
+        self._client: Optional[AsyncAnthropic] = None
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @property
+    def client(self) -> AsyncAnthropic:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._client is None or (current_loop and self._client_loop != current_loop):
+            self._client = AsyncAnthropic(
+                api_key=self.api_key,
+                timeout=self.timeout,
+            )
+            self._client_loop = current_loop
+        return self._client
 
     @property
     def model(self) -> str:

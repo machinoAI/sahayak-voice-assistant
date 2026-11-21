@@ -79,7 +79,7 @@ Located at [`app/adapters/llm/`](file:///Users/amankumar/Aman/project/sahayak-vo
 
 - **Consolidated `OpenAICompatibleLLMAdapter`**:
   - Implements `LLMClientProtocol` over standard OpenAI chat completion streaming endpoints.
-  - Covers **Groq LPU** (`openai/gpt-oss-120b`, `llama-3.3-70b-versatile`), **OpenAI** (`gpt-4o`, `gpt-4o-mini`), **Google Gemini** (`gemini-2.0-flash`), and local **Ollama** (`llama3.2`).
+  - Covers **Groq LPU** (`openai/gpt-oss-120b`, `llama-3.3-70b-versatile`), **OpenAI** (`gpt-4o`, `gpt-4o-mini`), **Google Gemini** (`gemini-3.8-flash`), and local **Ollama** (`llama3.2`).
   - Automatically hides internal reasoning tokens (`reasoning_format="hidden"`) on Groq to preserve TTFT.
 - **`AnthropicClaudeAdapter`**:
   - Native streaming integration via `AsyncAnthropic` (`claude-3-5-sonnet`, `claude-3-5-haiku`).
@@ -113,3 +113,12 @@ Located at [`app/services/voice_orchestrator.py`](file:///Users/amankumar/Aman/p
 - Encapsulates mutable turn tasks (`active_generation_task`, `active_tts_task`), sentence queues, and locks per active WebSocket socket.
 - Eliminates singleton race conditions across concurrent users.
 - Supports handshake query negotiation (`/ws/voice?stt=...&llm=...&tts=...&lang=...`) and dynamic mid-session switching via `SET_PROVIDER` frames.
+
+---
+
+## 7. Event Loop-Aware Client Pool Management
+
+To eliminate `RuntimeError: Event loop is closed` errors across independent asyncio loops (e.g., in automated tests, background subprocesses, or multi-turn test runners):
+- `OpenAICompatibleLLMAdapter`, `AnthropicClaudeAdapter`, and `HTTPClientManager` dynamically detect the active event loop via `asyncio.get_running_loop()`.
+- Client instances are cached alongside their owning event loop reference.
+- When an invocation occurs on a new or revived event loop, adapters lazily instantiate a fresh client, guaranteeing that in-flight network sockets and HTTP keepalive pools remain bound to the active loop.

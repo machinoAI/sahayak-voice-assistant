@@ -1,0 +1,15 @@
+{
+  "id": "scheme-ayushman-bharat-01",
+  "name": "Ayushman Bharat Pradhan Mantri Jan Arogya Yojana (AB-PMJAY)",
+  "category": "Healthcare & Social Security",
+  "ministry": "Ministry of Health and Family Welfare / National Health Authority",
+  "summary": "Ayushman Bharat PM-JAY is the world's largest government-funded health assurance scheme, providing health insurance coverage of up to ₹5 lakh per family per year for secondary and tertiary care hospitalization across public and empaneled private hospitals.",
+  "eligibility": "Bottom 40% vulnerable and poor families identified based on deprivation and occupational criteria from the Socio-Economic Caste Census (SECC 2011). Also expanded to cover all senior citizens aged 70 years and above irrespective of income.",
+  "benefits": "Cashless and paperless access to medical treatment up to ₹5,00,000 per family per year. Covers up to 3 days of pre-hospitalization and 15 days of post-hospitalization expenses, diagnostic tests, and medications. No cap on family size or age.",
+  "application_process": "Eligible citizens can check status at beneficiaries.nha.gov.in or visit any empaneled hospital / Ayushman Mitra kiosk with Aadhaar card or Ration card to generate their Ayushman Card.",
+  "key_facts": [
+    "Portable across India: Beneficiaries can receive cashless treatment at any empaneled hospital nationwide.",
+    "Pre-existing conditions are covered from day one.",
+    "Toll-free national helpline: 14555."
+  ]
+}
