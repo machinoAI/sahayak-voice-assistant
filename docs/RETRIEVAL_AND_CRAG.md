@@ -99,3 +99,39 @@ When running in local in-memory or embedded storage mode without an active Docke
    - 0 term matches: Score assigned **$0.30$** (Triggers CRAG `INCORRECT` fallback).
 
 This ensures deterministic, testable behavior that accurately triggers each branch of the Corrective RAG pipeline.
+
+---
+
+## 5. Grounded Citizen Knowledge Base & Ingestion Pipeline
+
+To provide grounded responses without relying solely on live search or synthetic fallbacks, Sahayak includes authoritative welfare datasets in [`data/knowledge_base/`](../data/knowledge_base/):
+
+### Indexed Datasets
+
+| File | Scheme | Key Grounded Information |
+| :--- | :--- | :--- |
+| `pm_kisan.json` | PM-KISAN | Financial benefit (₹6,000/yr), 3 installments of ₹2,000, Aadhaar/DBT mandatory, landholding criteria, exclusions. |
+| `ayushman_bharat.json` | AB-PMJAY | ₹5 lakh health coverage, cashless secondary/tertiary hospital treatment, SECC 2011 criteria, senior citizen age 70+ expansion. |
+| `pm_awas_yojana.json` | PMAY | Financial grants for rural housing (₹1.20L/₹1.30L), Urban interest subsidies (CLSS), female head co-ownership. |
+| `atal_pension_yojana.json` | APY | Guaranteed monthly pension ₹1,000-₹5,000 at age 60, entry age 18-40, spouse and nominee corpus return. |
+| `pm_ujjwala_yojana.json` | PMUY | Free LPG connections for women in BPL households, ₹1,600 assistance, ₹300 cylinder subsidies. |
+| `sukanya_samriddhi_yojana.json` | SSY | Small savings for girl child under 10 years, 8.2% compound interest, EEE tax exemption, 21-year maturity. |
+
+### Ingestion CLI & Execution
+The ingestion script ([`scripts/ingest_knowledge.py`](../scripts/ingest_knowledge.py)) parses these documents, generates 384-dimensional dense vectors using FastEmbed (`BAAI/bge-small-en-v1.5`), and indexes them into collection `sahayak_kb`:
+
+```bash
+# Using Makefile shortcut:
+make ingest
+
+# Or directly via Python script:
+python scripts/ingest_knowledge.py
+
+# Or via adapter module:
+python -m app.adapters.vector_store_qdrant --ingest
+```
+
+### Storage Concurrency & Testing Safety
+- **Local Disk Mode (`qdrant_storage/.lock`)**: When running embedded storage on disk, Qdrant enforces exclusive file locks (`portalocker`). The ingestion script detects if the directory is locked by a running uvicorn instance and guides the user.
+- **Standalone Docker Mode**: Running `make docker-up` launches a dedicated Qdrant server container on port 6333, allowing concurrent API access and background ingestion without lock contention.
+- **Isolated Testing Mode**: Automated unit and integration tests always run against an in-memory database (`QDRANT_PATH=":memory:" pytest tests/`) to ensure complete isolation.

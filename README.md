@@ -248,33 +248,36 @@ python client_stream.py --benchmark --no-play --turns 3
 
 ## 🧪 Testing & Verification
 
-Run the comprehensive test suite (42 unit and integration tests):
+Run the comprehensive test suite (78 automated unit, integration, and live tests):
 ```bash
-# Run all tests
-pytest tests/ -v
+# Run all tests via Makefile (automatically isolates Qdrant in-memory)
+make test
 
-# Run multi-turn session persistence tests
-pytest tests/test_multi_turn_persistence.py -v
+# Run code quality linting via Ruff
+make lint
 
-# Run live WebSocket integration test with pause resilience
-pytest tests/test_live_multi_turn_pause.py -v -s
+# Run automated provider latency benchmarking suite
+make benchmark
 ```
 
 ---
 
 ## 📚 Technical Documentation Hub
 
-For in-depth architectural and mathematical references, explore the [`docs/`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/docs/) directory:
+For in-depth architectural and mathematical references, explore the [`docs/`](docs/) directory:
 
-- 🏛️ **[Architecture & System Design](docs/ARCHITECTURE.md)**: End-to-end voice pipeline, task decoupling, concurrency primitives, and session persistence.
+- 🏛️ **[Architecture & System Design](docs/ARCHITECTURE.md)**: End-to-end voice pipeline, task decoupling, concurrency primitives, session persistence, knowledge ingestion, and Docker stack.
+- 📈 **[Multi-Provider Latency Benchmarks](docs/BENCHMARKS.md)**: Empirical measurements of TTFT, TTFAB, token velocity, and voice budget compliance across cloud/local providers.
 - 🎯 **[Intent Routing & Classification](docs/ROUTING_AND_CLASSIFICATION.md)**: OATS centroid router, dual n-gram features, Indic transliteration robustness, and sub-millisecond benchmarks.
-- 🔍 **[Knowledge Retrieval & Corrective RAG (CRAG)](docs/RETRIEVAL_AND_CRAG.md)**: Qdrant hybrid search, tri-state confidence scoring, and hallucination suppression.
+- 🔍 **[Knowledge Retrieval & Corrective RAG (CRAG)](docs/RETRIEVAL_AND_CRAG.md)**: Qdrant hybrid search, seed welfare datasets (`data/knowledge_base/`), tri-state confidence scoring, and hallucination suppression.
 - ⚡ **[Speculative Web Search & Concurrency](docs/WEB_SEARCH_AND_SPECULATION.md)**: RaLMSpec speculative retrieval, parallel task dispatch, and zero-latency web grounding.
-- 🌊 **[Streaming Voice Pipeline](docs/STREAMING_AND_VOICE_PIPELINE.md)**: Deepgram STT, KeepAlive heartbeat loop, sentence splitting (honorific + danda), and dual-tier TTS.
-- 📊 **[Real-Time Telemetry & Inspector UI](docs/TELEMETRY_AND_UI.md)**: WebSocket protocol specifications (`SET_LANGUAGE`, `LANGUAGE_CHANGED`), Web Audio zero-gain isolation, and Bézier canvas renderer.
+- 🌊 **[Streaming Voice Pipeline](docs/STREAMING_AND_VOICE_PIPELINE.md)**: Pluggable STT/LLM/TTS, KeepAlive heartbeat loop, sentence splitting (honorific + danda), loop-aware client pooling, and prefix continuation.
+- 📊 **[Real-Time Telemetry & Inspector UI](docs/TELEMETRY_AND_UI.md)**: WebSocket protocol specifications (`SET_LANGUAGE`, `SET_PROVIDER`), Web Audio zero-gain isolation, inline SVG favicon, and Bézier canvas renderer.
+- 🛡️ **[Project Hygiene & Constraints Guardian](.agents/skills/sahayak-tasks/SKILL.md)**: Workspace-local guardian enforcing backend-first boundaries, PR protocols, and 6-gate pre-commit verification.
 - 📑 **[Design Specifications](docs/designs/)**:
   - [Indic & Multilingual Speech Support](docs/designs/indic_multilingual_speech_support.md)
   - [Multi-Turn Voice Session Persistence](docs/designs/multi_turn_voice_session_persistence.md)
+  - [Pluggable Multi-Provider Architecture](docs/designs/multi_provider_architecture.md)
 - 📝 **[Changelog](CHANGELOG.md)**: Version history, releases, and feature breakdown.
 
 ---
