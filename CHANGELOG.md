@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] - 2026-11-21 (Release: `v0.4.0-hygiene-and-tooling`)
+
+### Added
+- **Knowledge Base Seed Data & Ingestion Script** (`data/knowledge_base/`, `scripts/ingest_knowledge.py`):
+  - Added structured datasets for 6 core Indian citizen welfare schemes: PM-KISAN, Ayushman Bharat (PM-JAY), Pradhan Mantri Awas Yojana (PMAY), Atal Pension Yojana (APY), PM Ujjwala Yojana (PMUY), and Sukanya Samriddhi Yojana (SSY).
+  - Built `scripts/ingest_knowledge.py` CLI supporting remote Qdrant clusters, local embedded storage, and graceful concurrency lock detection.
+  - Added CLI entrypoint directly into `app/adapters/vector_store_qdrant.py` and a backwards-compatible shim in `app/adapters/qdrant_retriever.py`.
+- **Developer Automation Task Runner** (`Makefile`):
+  - Shortcuts for `make dev`, `make test`, `make test-fast`, `make ingest`, `make benchmark`, `make lint`, `make clean`, and Docker targets.
+- **Containerization & Deployment** (`Dockerfile`, `docker-compose.yml`):
+  - Production-ready `Dockerfile` based on `python:3.12-slim-bookworm` with system audio libraries (`portaudio`, `ffmpeg`, `libsndfile1`) and container health checks.
+  - `docker-compose.yml` orchestrating FastAPI with a standalone Qdrant vector database container, resolving local file lock contention.
+- **Continuous Integration Pipeline** (`.github/workflows/ci.yml`):
+  - GitHub Actions matrix testing on Python 3.11, 3.12, and 3.13 with Ruff linting and in-memory test suite execution.
+- **FastAPI Favicon & Static Polish** (`app/main.py`):
+  - Added `/favicon.ico` route returning an inline SVG microphone icon to eliminate 404 spam in server logs.
+- **Dependency & Configuration Hardening** (`requirements.txt`, `requirements-dev.txt`, `pyproject.toml`):
+  - Added missing dependencies: `tabulate`, `certifi`, `numpy`, `portalocker`.
+  - Configured `pyproject.toml` with `asyncio_default_fixture_loop_scope = "function"` and filtered legacy deprecation warnings.
+
+---
+
 ## [0.8.0] - 2026-11-20 (Release: `v0.3.0-multi-provider-framework`)
 
 ### Added

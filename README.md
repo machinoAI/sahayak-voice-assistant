@@ -138,13 +138,13 @@ Measured on Apple Silicon M-series CPU over standard fiber broadband:
 
 ### 1. Prerequisites
 - Python 3.11 or higher
-- System audio drivers (`portaudio` for local microphone / speaker access)
+- System audio & codec dependencies (`portaudio` and `ffmpeg` for microphone and PCM/MP3 conversion):
   ```bash
   # macOS
-  brew install portaudio
+  brew install portaudio ffmpeg
   
   # Ubuntu / Debian
-  sudo apt-get install -y portaudio19-dev libasound2-dev
+  sudo apt-get install -y portaudio19-dev libasound2-dev ffmpeg
   ```
 
 ### 2. Environment Setup
@@ -190,16 +190,34 @@ QDRANT_PATH=qdrant_storage
 ```
 
 ### 4. Ingest Local Knowledge
-Ingest citizen welfare schemes into the embedded Qdrant vector database:
+Index citizen welfare schemes from `data/knowledge_base/` into the Qdrant vector database:
 ```bash
-python -m app.adapters.qdrant_retriever --ingest
+# Using Makefile shortcut:
+make ingest
+
+# Or directly via Python:
+python scripts/ingest_knowledge.py
 ```
 
 ### 5. Launch the Server
 ```bash
+# Using Makefile shortcut:
+make dev
+
+# Or directly via uvicorn:
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 Open **[http://localhost:8000/](http://localhost:8000/)** in Google Chrome or Microsoft Edge to access the interactive web interface.
+
+### 6. Docker Deployment (Optional)
+Run the full stack with an isolated Qdrant vector database container:
+```bash
+# Start FastAPI and Qdrant container stack
+make docker-up
+
+# Stop container stack
+make docker-down
+```
 
 ---
 

@@ -1,0 +1,15 @@
+{
+  "id": "scheme-pm-kisan-01",
+  "name": "Pradhan Mantri Kisan Samman Nidhi (PM-KISAN)",
+  "category": "Agriculture & Farmer Welfare",
+  "ministry": "Ministry of Agriculture and Farmers Welfare",
+  "summary": "PM-KISAN is a central sector scheme providing income support of ₹6,000 per year to all landholding farmer families across India, payable in three equal four-monthly installments of ₹2,000 directly into their bank accounts via DBT.",
+  "eligibility": "All landholding farmer families with cultivable landholding in their names. Exclusions include institutional landholders, farmer families holding constitutional posts, serving or retired government employees, professionals (doctors, engineers, lawyers, CA), and income tax payees.",
+  "benefits": "Financial benefit of ₹6,000 per annum paid in three installments of ₹2,000 every 4 months (April-July, August-November, December-March) through Direct Benefit Transfer (DBT).",
+  "application_process": "Farmers can apply online via the PM-KISAN portal (pmkisan.gov.in), through the PM-KISAN mobile app with face authentication, or visit Common Service Centres (CSCs). Required documents: Aadhaar card, citizenship proof, landholding documents (Khasra/Khatauni), and bank account linked with Aadhaar.",
+  "key_facts": [
+    "e-KYC is mandatory for all PM-KISAN registered farmers.",
+    "Aadhaar seeding with active bank account is compulsory for fund transfer.",
+    "Helpline numbers: 155261, 011-24300606."
+  ]
+}

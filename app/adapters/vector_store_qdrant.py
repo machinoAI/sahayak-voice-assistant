@@ -184,3 +184,14 @@ class QdrantVectorStoreAdapter:
             )
 
         await self.client.upsert(collection_name=self.collection_name, points=points)
+
+
+if __name__ == "__main__":
+    import sys
+    import asyncio
+    from pathlib import Path
+    from scripts.ingest_knowledge import run_ingestion
+
+    data_path = Path(__file__).resolve().parent.parent.parent / "data" / "knowledge_base"
+    exit_code = asyncio.run(run_ingestion(data_dir=data_path))
+    sys.exit(exit_code)

@@ -3,6 +3,7 @@ Consolidated OpenAI-compatible LLM streaming adapter.
 Supports Groq, OpenAI, Google Gemini (OpenAI endpoint), and local Ollama/vLLM endpoints.
 """
 
+import asyncio
 import logging
 from typing import AsyncGenerator, List, Dict, Any, Optional, Union
 from openai import AsyncOpenAI
@@ -32,15 +33,27 @@ class OpenAICompatibleLLMAdapter:
         self.timeout = timeout
         self.base_url = base_url
 
+        self._client: Optional[AsyncOpenAI] = None
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @property
+    def client(self) -> Optional[AsyncOpenAI]:
         if not self.api_key and self.provider != "ollama":
-            self.client = None
-        else:
+            return None
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._client is None or (current_loop and self._client_loop != current_loop):
             effective_key = self.api_key or "ollama"
-            self.client = AsyncOpenAI(
+            self._client = AsyncOpenAI(
                 api_key=effective_key,
                 base_url=self.base_url,
-                timeout=timeout,
+                timeout=self.timeout,
             )
+            self._client_loop = current_loop
+        return self._client
 
     @property
     def model(self) -> str:

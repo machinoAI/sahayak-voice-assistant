@@ -5,7 +5,7 @@ via centralized multi-provider factories.
 """
 
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from app.services.voice_orchestrator import VoiceRAGOrchestrator
@@ -74,6 +74,19 @@ def create_app() -> FastAPI:
         if index_file.exists():
             return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
         return HTMLResponse("<h1>Sahayak Voice Assistant</h1><p>UI loading...</p>")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        # High-res SVG voice assistant microphone favicon
+        svg_content = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+            '<circle cx="16" cy="16" r="15" fill="#0f172a"/>'
+            '<path d="M16 6a4 4 0 0 0-4 4v7a4 4 0 0 0 8 0v-7a4 4 0 0 0-4-4z" fill="#f97316"/>'
+            '<path d="M9 15v2a7 7 0 0 0 14 0v-2h-2v2a5 5 0 0 1-10 0v-2H9z" fill="#38bdf8"/>'
+            '<rect x="15" y="24" width="2" height="4" fill="#38bdf8"/>'
+            '</svg>'
+        )
+        return Response(content=svg_content, media_type="image/svg+xml")
 
     @app.get("/health")
     async def health_check():

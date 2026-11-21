@@ -1,0 +1,15 @@
+{
+  "id": "scheme-pm-awas-01",
+  "name": "Pradhan Mantri Awas Yojana (PMAY - Gramin and Urban)",
+  "category": "Housing & Rural Development",
+  "ministry": "Ministry of Housing and Urban Affairs & Ministry of Rural Development",
+  "summary": "PMAY aims to provide 'Housing for All' by providing pucca houses with basic amenities (piped water, sanitation, electricity, LPG) to all eligible homeless households and those living in kutcha and dilapidated houses.",
+  "eligibility": "Families without a pucca house anywhere in India. For PMAY-Gramin, beneficiaries are selected via SECC 2011 and Awaas+ survey. For PMAY-Urban, EWS (annual income up to ₹3 lakh), LIG (₹3 to ₹6 lakh), and MIG categories with female head of household as owner/co-owner.",
+  "benefits": "Financial grant of ₹1,20,000 in plains and ₹1,30,000 in hilly/difficult/North-Eastern areas for rural housing. Under PMAY-Urban, interest subsidy up to 6.5% on housing loans for eligible home buyers via Credit Linked Subsidy Scheme (CLSS).",
+  "application_process": "Eligible citizens can apply through Gram Panchayats (Gramin) or via online portal pmaymis.gov.in and CSC centres (Urban). Required documents: Aadhaar, bank passbook, income certificate, land documents.",
+  "key_facts": [
+    "Houses must be registered in the name of the female head or jointly with spouse.",
+    "Funds transferred directly into beneficiary bank accounts in stages linked to geo-tagged construction progress.",
+    "Official website: pmaymis.gov.in (Urban) / pmayg.nic.in (Gramin)."
+  ]
+}
