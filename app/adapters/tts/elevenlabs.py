@@ -3,6 +3,7 @@ ElevenLabs Streaming TTS Adapter.
 Provides low-latency streaming text-to-speech yielding 16kHz linear PCM or MP3 chunks.
 """
 
+import inspect
 import logging
 from typing import AsyncGenerator, Optional
 from elevenlabs.client import AsyncElevenLabs
@@ -22,7 +23,7 @@ class ElevenLabsTTSAdapter:
         model_id: Optional[str] = None,
     ):
         self.api_key = api_key if api_key is not None else settings.ELEVENLABS_API_KEY
-        self.voice_id = voice_id or settings.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM"
+        self.voice_id = voice_id or settings.ELEVENLABS_VOICE_ID or "JBFqnCBsd6RMkjVDRZzb"
         self.model_id = model_id or settings.ELEVENLABS_MODEL_ID or "eleven_turbo_v2_5"
         self._fallback_adapter = EdgeTTSAdapter()
         self.client = AsyncElevenLabs(api_key=self.api_key) if self.api_key else None
@@ -42,13 +43,14 @@ class ElevenLabsTTSAdapter:
 
         effective_voice = voice_override or self.voice_id
         try:
-            audio_stream = await self.client.text_to_speech.convert(
+            stream_result = self.client.text_to_speech.convert(
                 voice_id=effective_voice,
                 text=text,
                 model_id=self.model_id,
                 output_format="pcm_16000",
                 optimize_streaming_latency=3,
             )
+            audio_stream = await stream_result if inspect.isawaitable(stream_result) else stream_result
 
             async for chunk in audio_stream:
                 if chunk:
