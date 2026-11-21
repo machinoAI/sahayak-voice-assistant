@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     EDGE_TTS_INDIC_VOICE: str = "hi-IN-SwaraNeural"
     # 3. ElevenLabs
     ELEVENLABS_API_KEY: Optional[str] = None
-    ELEVENLABS_VOICE_ID: str = "21m00Tcm4TlvDq8ikWAM"  # Default Rachel voice
+    ELEVENLABS_VOICE_ID: str = "JBFqnCBsd6RMkjVDRZzb"  # Default George voice (Free & Paid compatible)
     ELEVENLABS_MODEL_ID: str = "eleven_turbo_v2_5"
 
     # Vector DB (Qdrant) & Embeddings
