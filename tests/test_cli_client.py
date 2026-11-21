@@ -154,7 +154,7 @@ def test_live_multi_turn_pause():
 
     async def _run():
         port = 8780
-        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
         server = uvicorn.Server(config)
         server_task = asyncio.create_task(server.serve())
 
@@ -169,7 +169,7 @@ def test_live_multi_turn_pause():
 
         async with websockets.connect(ws_url) as ws:
             # Turn 1
-            metrics1 = await client.run_turn(ws, pcm_chunks_from_bytes(pcm_turn1))
+            metrics1 = await client.run_turn(ws, pcm_chunks_from_bytes(pcm_turn1), timeout=15.0)
             assert metrics1["total_audio_bytes"] > 1000
             assert len(metrics1["transcript"]) > 0
 
@@ -177,7 +177,7 @@ def test_live_multi_turn_pause():
             await asyncio.sleep(11.0)
 
             # Turn 2
-            metrics2 = await client.run_turn(ws, pcm_chunks_from_bytes(pcm_turn2))
+            metrics2 = await client.run_turn(ws, pcm_chunks_from_bytes(pcm_turn2), timeout=15.0)
             assert metrics2["total_audio_bytes"] > 1000
             assert len(metrics2["transcript"]) > 0
 

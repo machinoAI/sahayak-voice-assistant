@@ -187,7 +187,7 @@ class VoiceClientBenchmark:
             await asyncio.sleep(0.018)
 
     async def run_turn(
-        self, ws, audio_generator: AsyncGenerator[bytes, None]
+        self, ws, audio_generator: AsyncGenerator[bytes, None], timeout: float = 12.0
     ) -> dict:
         """Executes a single voice turn and tracks latency milestones."""
         self._reset_metrics()
@@ -204,8 +204,8 @@ class VoiceClientBenchmark:
         first_audio_seen = False
         while True:
             try:
-                # 8-second timeout for server response
-                message = await asyncio.wait_for(ws.recv(), timeout=8.0)
+                # Configurable timeout for server response
+                message = await asyncio.wait_for(ws.recv(), timeout=timeout)
                 now = time.perf_counter()
 
                 if isinstance(message, str):
