@@ -91,7 +91,7 @@ def test_tavily_live_search():
         pytest.skip("TAVILY_API_KEY not configured in .env")
 
     async def _run():
-        adapter = TavilySearchAdapter(api_key=settings.TAVILY_API_KEY)
+        adapter = TavilySearchAdapter(api_key=settings.TAVILY_API_KEY, timeout=10.0)
         results = await adapter.search("current weather in New Delhi today", max_results=2)
         print(f"\n[TAVILY LIVE] Retrieved {len(results)} results")
         for doc in results:

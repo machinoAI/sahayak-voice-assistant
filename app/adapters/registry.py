@@ -132,6 +132,8 @@ def get_stt_adapter(
     elif name_clean in ("local", "whisper"):
         return LocalWhisperSTTAdapter(
             model_size=settings.LOCAL_WHISPER_MODEL,
+            device=settings.LOCAL_WHISPER_DEVICE,
+            compute_type=settings.LOCAL_WHISPER_COMPUTE_TYPE,
             language=language,
         )
     else:

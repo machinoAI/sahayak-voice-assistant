@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # STT Provider: Sarvam AI & Local Whisper
     SARVAM_API_KEY: Optional[str] = None
     LOCAL_WHISPER_MODEL: str = "base"
+    LOCAL_WHISPER_DEVICE: str = "auto"
+    LOCAL_WHISPER_COMPUTE_TYPE: str = "int8"
 
     # LLM Providers
     # 1. Groq

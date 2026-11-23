@@ -44,6 +44,24 @@ make dev
 # Equivalent to: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+### Start in Zero-Cost 100% Offline Mode
+```bash
+VOICE_PROFILE=local make dev
+# Routes STT to local faster-whisper, LLM to local Ollama (llama3.2), and TTS to Edge-TTS
+```
+
+### Headless CLI Streaming & Benchmark Commands
+```bash
+# Speak a query through local faster-whisper + Groq + Edge-TTS:
+python client_stream.py --url "ws://localhost:8000/ws/voice?stt=local&llm=groq&tts=edge" --say "What is PM Kisan Yojana?"
+
+# Run multi-turn automated latency benchmark:
+python client_stream.py --url "ws://localhost:8000/ws/voice?stt=local&llm=groq&tts=edge" --benchmark
+
+# Interactive microphone stream in Hindi:
+python client_stream.py --lang hi
+```
+
 ### Ingest Knowledge Base into Qdrant
 ```bash
 make ingest

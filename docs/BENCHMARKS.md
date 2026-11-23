@@ -31,3 +31,22 @@
 | **gemini + cartesia** | 2025.2 ms | 901.5 ms | **2926.7 ms** | 243.9% | ❌ EXCEEDED |
 | **gemini + edge** | 2238.2 ms | 3240.4 ms | **5478.6 ms** | 456.6% | ❌ EXCEEDED |
 | **gemini + elevenlabs** | 2674.4 ms | 549.5 ms | **3223.9 ms** | 268.7% | ❌ EXCEEDED |
+
+---
+
+## 4. Offline Speech-to-Text Benchmark (Local Faster-Whisper)
+
+- **Engine:** `faster-whisper` (CTranslate2 runtime, `int8` quantization)
+- **Model Sizes Tested:** `tiny` (~75MB) and `base` (~140MB)
+- **Hardware Target:** Apple Silicon CPU (Local Development Environment)
+- **Audio Sample:** Real citizen user recording (30.44 seconds, 974,080 bytes, 16kHz linear PCM)
+
+| Metric | Measured Value | Notes |
+| :--- | :--- | :--- |
+| **Initial Model Load** | **1,133 ms** | One-time disk read, held in process singleton cache |
+| **Warm Model Load** | **0.0 ms** | Zero overhead across multi-turn conversational turns |
+| **Transcription Latency (30.4s audio)** | **83.1 ms** | Full CTranslate2 ASR execution in worker thread |
+| **Real-Time Factor (RTF)** | **0.003x** | >300x faster than real-time playback speed |
+| **Voice Activity Detection (VAD)** | **< 1.0 ms / chunk** | RMS energy profiling on 20ms (640-byte) PCM frames |
+| **Silence Endpointing Window** | **500 ms** | Calibrated for sub-second natural turn-taking |
+

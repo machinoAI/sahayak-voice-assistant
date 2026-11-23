@@ -4,31 +4,41 @@ The end-to-end voice pipeline coordinates Speech-to-Text (STT), conversational m
 
 ---
 
-## 1. Deepgram Streaming STT, Multilingual Support & KeepAlive
+## 1. Multi-Provider Speech-to-Text (STT) Engines
 
-Sahayak consumes live microphone audio at **16kHz mono, 16-bit linear PCM** in 20ms–100ms frames:
+Sahayak consumes live microphone audio at **16kHz mono, 16-bit linear PCM** in 20ms frames (640 bytes per chunk) across three primary STT engines:
 
-- **Adapter**: [`app/adapters/stt_deepgram.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/adapters/stt_deepgram.py)
+### A. Deepgram Streaming STT (`app/adapters/stt/deepgram.py`)
 - **Model**: `nova-2-general` with low-latency endpointing (`endpointing=300ms`, `interim_results=True`).
-- **Multilingual Language Parameterization**:
-  - `en-IN`: Indian English dialect with domain terminology.
-  - `hi`: Hindi spoken input.
-  - `multi`: Multilingual auto-detection for code-switched Hinglish.
-  - Dynamically configured per WebSocket session upon connection and re-bound in-flight via `SET_LANGUAGE` client frames.
-- **Heartbeat & Inactivity KeepAlive Protocol**:
-  - Deepgram streaming WebSockets enforce an aggressive 10–12 second inactivity timeout. To prevent the upstream connection from dropping while the user listens to the assistant's reply:
-  - `DeepgramStreamSession._keepalive_loop()` runs an autonomous background monitor that transmits `{"type": "KeepAlive"}` JSON frames every 5.0 seconds when idle audio time exceeds 4.0s.
-  - Keepalive transmission is synchronized with audio streaming using `async with self._send_lock:`.
-- **Lazy Auto-Reconnection & Stampede Protection**:
-  - In [`app/api/websocket_endpoint.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/app/api/websocket_endpoint.py), `ensure_stt_connected()` inspects `session.is_connected` before forwarding incoming binary frames.
-  - If upstream socket resets occur, the gateway automatically re-establishes the Deepgram connection and restarts the transcript listener under an `asyncio.Lock()` to prevent connection stampedes.
-- **Server-Side Barge-In Detection**:
-  ```python
-  if orchestrator.is_speaking():
-      logger.info(f"[BARGE_IN] User interruption detected during speech: '{text[:30]}'")
-      await orchestrator.handle_user_interruption(websocket, session_memory=session_memory)
-  ```
-  If the user speaks while the assistant is streaming tokens or playing audio, the active turn is cancelled in $<40\text{ms}$ and the audio playback buffer is flushed immediately.
+- **Multilingual Parameterization**: Supports `en-IN` (Indian English), `hi` (Hindi), and `multi` (code-switched Hinglish auto-detection).
+- **Inactivity KeepAlive Protocol**: Sends `{"type": "KeepAlive"}` control frames every 5.0s during idle periods to prevent upstream socket dropouts.
+- **Lazy Auto-Reconnection**: Reconnects silently upon upstream socket resets with stampede protection via `stt_reconnect_lock`.
+
+### B. Sarvam AI Indic ASR (`app/adapters/stt/sarvam.py`)
+- **Model**: `saaras:v3` for high-accuracy phonetic transcription across 10+ Indian languages (Hindi, Bengali, Tamil, etc.).
+- **Buffered Streaming**: Batches audio frames in-memory and converts to linear PCM WAV format on utterance boundary.
+
+### C. Local Faster-Whisper (`app/adapters/stt/local_whisper.py`)
+- **Offline Zero-Cost Engine**: Powered by `faster-whisper` and CTranslate2, executing quantized Whisper models (`tiny`, `base`, `small`, `medium`) locally without cloud API keys or internet access.
+- **Non-Blocking Inference**: Wraps synchronous model execution in `asyncio.to_thread` to preserve FastAPI WebSocket event loop responsiveness.
+- **Singleton Model Caching**: Heavy model weights are loaded once into a process-level cache keyed by `(model_size, device, compute_type)`, eliminating 1–2s load times on subsequent turns.
+- **Real-Time Voice Activity Detection (VAD)**:
+  - Computes RMS audio energy per 20ms PCM chunk (`samples = np.frombuffer(chunk, dtype=np.int16)`).
+  - Detects active speech when $\text{RMS} \ge 250.0$.
+  - Emits interim transcripts during sustained speech segments.
+- **Silence Endpointing (500ms)**:
+  - When speech stops and silence accumulates to $\ge 500\text{ms}$, the segment is finalized, transcribed via CTranslate2, and dispatched as a `final` transcript event.
+- **Continuous Multi-Turn Session Persistence**:
+  - Exposes `@property def is_connected(self) -> bool` to integrate seamlessly with the gateway's `ensure_stt_connected()` guard.
+  - Keeps the active session open across multiple user conversational turns without reconnecting.
+
+### D. Server-Side Barge-In Detection
+```python
+if orchestrator.is_speaking():
+    logger.info(f"[BARGE_IN] User interruption detected during speech: '{text[:30]}'")
+    await orchestrator.handle_user_interruption(websocket, session_memory=session_memory)
+```
+If the user speaks while the assistant is streaming tokens or playing audio, the active turn is cancelled in $<40\text{ms}$ and the audio playback buffer is flushed immediately.
 
 ---
 
