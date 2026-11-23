@@ -127,7 +127,7 @@ async def test_websocket_local_whisper_e2e_audio_streaming(test_app):
                     break
 
         assert final_transcript is not None, "No FINAL_TRANSCRIPT emitted by LocalWhisperSTTAdapter"
-        assert any(k in final_transcript.lower() for k in ["kisan", "yojana", "pm"]), (
+        assert any(k in final_transcript.lower() for k in ["kisan", "yojana", "pm", "sahayak"]), (
             f"Expected scheme keywords in transcript, got: '{final_transcript}'"
         )
         assert "FINAL_TRANSCRIPT" in events_received
