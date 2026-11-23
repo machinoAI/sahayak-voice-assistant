@@ -59,7 +59,7 @@ class LocalWhisperStreamSession:
         compute_type: str = "default",
         language: Optional[str] = None,
         speech_threshold: float = 250.0,
-        silence_threshold_ms: int = 800,
+        silence_threshold_ms: int = 500,
         allow_mock_fallback: bool = True,
         mock_text: str = "What is Sahayak voice assistant?",
     ):
@@ -109,6 +109,11 @@ class LocalWhisperStreamSession:
 
     async def connect(self) -> None:
         await self.start()
+
+    @property
+    def is_connected(self) -> bool:
+        """Returns True if the session is currently active and listening."""
+        return self._is_active
 
     async def send_audio(self, chunk: bytes) -> None:
         """Process incoming 16kHz linear PCM mono audio frame (e.g. 20ms = 640 bytes)."""
@@ -305,7 +310,7 @@ class LocalWhisperSTTAdapter:
         compute_type: Optional[str] = None,
         language: Optional[str] = None,
         speech_threshold: float = 250.0,
-        silence_threshold_ms: int = 800,
+        silence_threshold_ms: int = 500,
         allow_mock_fallback: bool = True,
     ):
         self.model_size = model_size or settings.LOCAL_WHISPER_MODEL
@@ -340,6 +345,11 @@ class LocalWhisperSTTAdapter:
 
     async def connect(self) -> None:
         await self.start()
+
+    @property
+    def is_connected(self) -> bool:
+        """Returns True if the active session is currently active and listening."""
+        return self._active_session is not None and self._active_session.is_connected
 
     async def send_audio(self, chunk: bytes) -> None:
         if self._active_session:
