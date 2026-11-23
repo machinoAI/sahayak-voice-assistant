@@ -17,6 +17,7 @@ Welcome to the comprehensive technical documentation for **Sahayak**, an ultra-l
 | **[Streaming Voice Pipeline](STREAMING_AND_VOICE_PIPELINE.md)** | Pluggable STT/LLM/TTS streaming, rolling memory with Indic pronoun resolution, danda-guarded sentence splitting, prefix continuation failover, loop-aware client pools, and connection-scoped session contexts. |
 | **[Real-Time Telemetry & Inspector UI](TELEMETRY_AND_UI.md)** | FastAPI-served testing SPA at `http://localhost:8000/`, WebSocket protocol specification, dynamic language and provider selector controls, Bézier spline neural decision tree canvas, inline SVG favicon, and Web Audio API engine. |
 | **[Multi-Provider Latency Benchmarks](BENCHMARKS.md)** | Automated empirical benchmark results measuring Time-to-First-Token (TTFT), Time-to-First-Audio-Byte (TTFAB), token velocity, and end-to-end voice budget compliance across cloud and local providers. |
+| **[Codebase Reality Check & Audit](CODEBASE_AUDIT_REALITY_CHECK.md)** | Exhaustive, evidence-based end-to-end reality check across all STT/LLM/TTS adapters, live provider tests, 86-test verification, latency budget analysis, and identified risks. |
 
 ### Technical Design Specifications
 
