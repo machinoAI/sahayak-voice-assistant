@@ -90,7 +90,9 @@ To maintain natural conversational rhythm without perceptible lag, every turn is
 
 | Pipeline Component | Technology Stack | Latency Budget | Observed Benchmark (EN / HI) |
 | :--- | :--- | :--- | :--- |
-| **Speech-to-Text (STT)** | Deepgram Nova-2 Streaming (`en-IN` / `hi` / `multi`) | $< 250\text{ ms}$ | $120\text{ ms} - 180\text{ ms}$ |
+| **Speech-to-Text (Cloud)** | Deepgram Nova-2 Streaming (`en-IN` / `hi` / `multi`) | $< 250\text{ ms}$ | $120\text{ ms} - 180\text{ ms}$ |
+| **Speech-to-Text (Indic)** | Sarvam AI Saaras Indic ASR | $< 350\text{ ms}$ | $200\text{ ms} - 320\text{ ms}$ |
+| **Speech-to-Text (Offline)**| Faster-Whisper (CTranslate2 int8 CPU/GPU) | $< 300\text{ ms}$ | **$80\text{ ms} - 220\text{ ms}$** (RTF: $0.003\text{x}$) |
 | **Intent Classification** | In-Process OATS Centroid Sparse Router | $< 1.0\text{ ms}$ | **$0.19\text{ ms} - 0.38\text{ ms}$** |
 | **Vector DB Retrieval** | Qdrant Hybrid (Dense + Sparse BM25) | $< 60\text{ ms}$ | $27\text{ ms} - 55\text{ ms}$ |
 | **Speculative Search Dispatch** | Non-blocking `asyncio.create_task` | $< 2.0\text{ ms}$ | **$0.8\text{ ms} - 1.2\text{ ms}$** |

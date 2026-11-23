@@ -12,7 +12,7 @@
 ## 🌟 Key Features
 
 - **Pluggable Multi-Provider Framework & Automated Tiered Failover**:
-  - **Speech-to-Text (STT)**: Deepgram Nova-2 streaming WebSocket, Sarvam AI Saaras Indic ASR, and Local Whisper offline.
+  - **Speech-to-Text (STT)**: Deepgram Nova-2 streaming WebSocket, Sarvam AI Saaras Indic ASR, and **offline CTranslate2 `faster-whisper`** with singleton model caching and real-time VAD energy profiling.
   - **Large Language Models (LLM)**: Consolidated OpenAI-compatible adapter (Groq LPU, OpenAI GPT-4o, Google Gemini Flash, local Ollama) and Anthropic Claude 3.5 Sonnet/Haiku.
   - **Text-to-Speech (TTS)**: Cartesia Sonic (16kHz PCM), Microsoft Edge-TTS (multilingual neural Indic), and ElevenLabs Turbo (16kHz PCM).
   - **Prefix Continuation Failover**: Mid-stream LLM dropouts seamlessly resume on fallback models using completed sentences as assistant history to avoid speech repetition.
@@ -180,10 +180,16 @@ SARVAM_API_KEY=your_sarvam_api_key
 
 # Profiles & Active Providers (defaults shown)
 VOICE_PROFILE=production        # 'production' or 'local'
-ACTIVE_STT_PROVIDER=deepgram    # deepgram | sarvam | whisper
+ACTIVE_STT_PROVIDER=deepgram    # deepgram | sarvam | local | whisper
 ACTIVE_LLM_PROVIDER=groq        # groq | gemini | openai | anthropic | ollama
 ACTIVE_TTS_PROVIDER=cartesia    # cartesia | elevenlabs | edge
 DEFAULT_LANGUAGE=auto           # auto | en | hi
+
+# Local Faster-Whisper Settings (Offline ASR)
+LOCAL_WHISPER_MODEL=base        # tiny | base | small | medium
+LOCAL_WHISPER_DEVICE=auto       # auto | cpu | cuda
+LOCAL_WHISPER_COMPUTE_TYPE=int8 # int8 | float16 | float32 | default
+
 HOST=0.0.0.0
 PORT=8000
 QDRANT_PATH=qdrant_storage
@@ -201,7 +207,7 @@ python scripts/ingest_knowledge.py
 
 ### 5. Launch the Server
 ```bash
-# Using Makefile shortcut:
+# Using Makefile shortcut (runs on http://localhost:8000/):
 make dev
 
 # Or directly via uvicorn:
@@ -209,7 +215,23 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 Open **[http://localhost:8000/](http://localhost:8000/)** in Google Chrome or Microsoft Edge to access the interactive web interface.
 
-### 6. Docker Deployment (Optional)
+### 6. Running 100% Offline (Zero-Cost Local Profile)
+Sahayak can run completely disconnected from cloud APIs using local quantized models:
+- **STT**: `faster-whisper` (CTranslate2 running locally on CPU/GPU with int8 quantization).
+- **RAG & Search**: Embedded local Qdrant (`qdrant_storage/`) with local FastEmbed ONNX embeddings.
+- **LLM**: Local [Ollama](https://ollama.com/) running `llama3.2`.
+- **TTS**: Microsoft Edge-TTS (free neural voices) or local TTS.
+
+```bash
+# 1. Start Ollama with Llama 3.2
+ollama run llama3.2
+
+# 2. Launch Sahayak in local mode:
+VOICE_PROFILE=local make dev
+```
+In the Web UI, simply click the **`💻 Local`** architecture pill at the top of the screen to route all traffic to local offline providers.
+
+### 7. Docker Deployment (Optional)
 Run the full stack with an isolated Qdrant vector database container:
 ```bash
 # Start FastAPI and Qdrant container stack
@@ -225,6 +247,8 @@ make docker-down
 
 ### Web UI
 The browser interface includes:
+- **Architecture Profile Switcher**: One-click pills to toggle between **⚡ Cloud** (Deepgram + Groq + Cartesia), **💻 Local** (Local Whisper + Ollama + Edge-TTS), and **🇮🇳 Indic** (Sarvam ASR + Gemini Flash + Edge-TTS Indic).
+- **Provider Dropdowns**: Granular per-component selection of STT, LLM, and TTS providers.
 - **Language Switcher**: Dynamically toggle between Hindi (`hi`), Indian English (`en-IN`), Global English (`en`), and Multilingual (`multi`).
 - **Interactive Presets**: One-click chips to test CRAG `CORRECT`, `AMBIGUOUS`, and `INCORRECT` paths.
 - **Neural Decision Canvas**: Real-time animated visualization of pipeline routing and speculative search pruning.
@@ -234,13 +258,22 @@ The browser interface includes:
 A fully-featured terminal client is provided in [`client_stream.py`](file:///Users/amankumar/Aman/project/sahayak-voice-assistant/client_stream.py):
 
 ```bash
-# Live microphone interaction in Indian English
+# 1. Test live speech by synthesizing a query (e.g. testing Local Whisper + Groq + Edge-TTS):
+python client_stream.py --url "ws://localhost:8000/ws/voice?stt=local&llm=groq&tts=edge" --say "What is PM Kisan Yojana?"
+
+# 2. Run the automated multi-turn conversation benchmark:
+python client_stream.py --url "ws://localhost:8000/ws/voice?stt=local&llm=groq&tts=edge" --benchmark
+
+# 3. Stream from a recorded WAV file:
+python client_stream.py --file path/to/sample.wav
+
+# 4. Interactive microphone streaming in Indian English:
 python client_stream.py --lang en-IN
 
-# Live microphone interaction in Hindi
+# 5. Interactive microphone streaming in Hindi:
 python client_stream.py --lang hi
 
-# Headless benchmark mode (no speaker playback)
+# 6. Headless benchmark mode (no speaker playback):
 python client_stream.py --benchmark --no-play --turns 3
 ```
 
@@ -248,7 +281,7 @@ python client_stream.py --benchmark --no-play --turns 3
 
 ## 🧪 Testing & Verification
 
-Run the comprehensive test suite (78 automated unit, integration, and live tests):
+Run the comprehensive test suite (**86 automated unit, integration, and live tests**):
 ```bash
 # Run all tests via Makefile (automatically isolates Qdrant in-memory)
 make test
