@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.10.0] - 2026-11-23
+
+### Added
+- **Offline Faster-Whisper STT Integration** (`app/adapters/stt/local_whisper.py`):
+  - Integrated CTranslate2-accelerated `faster-whisper` (`WhisperModel`) for local, zero-cost offline speech-to-text.
+  - Implemented non-blocking model execution inside `asyncio.to_thread` with process-wide singleton model caching by `(model_size, device, compute_type)` to eliminate latency spikes across turns.
+  - Built streaming audio session architecture (`LocalWhisperStreamSession`) implementing `StreamingSTTProtocol` (`start()`, `send_audio()`, `receive_transcripts()`, `close()`).
+  - Added real-time Voice Activity Detection (VAD) via RMS energy profiling with automatic silence endpointing (default 800ms) for natural conversational turn-taking.
+  - Supported multi-turn voice session continuity without session recreation, interim transcript streaming, and graceful mock fallback for test/dev environments without CTranslate2 binaries.
+  - Added `LOCAL_WHISPER_DEVICE` (`auto`) and `LOCAL_WHISPER_COMPUTE_TYPE` (`int8`) in `app/core/config.py` and `.env.example`.
+  - Pinned `faster-whisper>=1.0.0` and `ctranslate2>=4.5.0` in `requirements.txt`.
+
+---
+
 ## [0.9.0] - 2026-11-21 (Release: `v0.4.0-hygiene-and-tooling`)
 
 ### Added
